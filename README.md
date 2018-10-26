@@ -18,7 +18,7 @@ golang libs.  This may prove to not be ideal, and may be changed over time, but 
 ## Logging and Debug
 
 By default the library does not provide any logging, but provides an error message that includes any messages from
-iscsiadm as well as exit-codes.  In the even that you need to debug the library, we provide a function:
+iscsiadm as well as exit-codes.  In the event that you need to debug the library, we provide a function:
 
 ```
 func EnableDebugLogging(writer io.Writer)
