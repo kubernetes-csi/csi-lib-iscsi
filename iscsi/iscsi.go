@@ -178,6 +178,7 @@ func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds int,
 
 func getMultipathDisk(path string) (string, error) {
 	// Follow link to destination directory
+	debug.Printf("Checking for multipath device for path: %s", path)
 	devicePath, err := os.Readlink(path)
 	if err != nil {
 		debug.Printf("Failed reading link for multipath disk: %s -- error: %s\n", path, err.Error())
@@ -187,16 +188,25 @@ func getMultipathDisk(path string) (string, error) {
 	// If destination directory is already identified as a multipath device,
 	// just return its path
 	if strings.HasPrefix(sdevice, "dm-") {
+		debug.Printf("Already found multipath device: %s", sdevice)
 		return path, nil
 	}
 	// Fallback to iterating through all the entries under /sys/block/dm-* and
 	// check to see if any have an entry under /sys/block/dm-*/slaves matching
 	// the device the symlink was pointing at
-	dmPaths, _ := filepath.Glob("/sys/block/dm-*")
+	dmPaths, err := filepath.Glob("/sys/block/dm-*")
+	if err != nil {
+		debug.Printf("Glob error: %s", err)
+		return "", err
+	}
 	for _, dmPath := range dmPaths {
-		sdevices, _ := filepath.Glob(filepath.Join(dmPath, "slaves", "*"))
+		sdevices, err := filepath.Glob(filepath.Join(dmPath, "slaves", "*"))
+		if err != nil {
+			debug.Printf("Glob error: %s", err)
+		}
 		for _, spath := range sdevices {
 			s := filepath.Base(spath)
+			debug.Printf("Basepath: %s", s)
 			if sdevice == s {
 				// We've found a matching entry, return the path for the
 				// dm-* device it was found under
@@ -206,6 +216,7 @@ func getMultipathDisk(path string) (string, error) {
 			}
 		}
 	}
+	debug.Printf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
 	return "", fmt.Errorf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
 }
 
@@ -283,21 +294,19 @@ func Connect(c Connector) (string, error) {
 		if len(devicePaths) < 1 {
 			return "", fmt.Errorf("failed to find device path: %s", devicePath)
 		}
-		devicePath = devicePaths[0]
-		for _, path := range devicePaths {
-			if path != "" {
-				if mappedDevicePath, err := getMultipathDisk(path); mappedDevicePath != "" {
-					devicePath = mappedDevicePath
-					if err != nil {
-						return "", err
-					}
-					break
-				}
-			}
-		}
 
 	}
 
+	for i, path := range devicePaths {
+		if path != "" {
+			if mappedDevicePath, err := getMultipathDisk(path); mappedDevicePath != "" {
+				devicePaths[i] = mappedDevicePath
+				if err != nil {
+					return "", err
+				}
+			}
+		}
+	}
 	debug.Printf("After connect we're returning devicePaths: %s", devicePaths)
 	if len(devicePaths) > 0 {
 		return devicePaths[0], err
