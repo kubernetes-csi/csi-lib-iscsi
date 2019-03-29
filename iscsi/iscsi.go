@@ -1,6 +1,7 @@
 package iscsi
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -33,20 +34,18 @@ type iscsiSession struct {
 
 //Connector provides a struct to hold all of the needed parameters to make our iscsi connection
 type Connector struct {
-	VolumeName       string
-	TargetIqn        string
-	TargetPortals    []string
-	Port             string
-	Lun              int32
-	AuthType         string
-	DiscoverySecrets Secrets
-	SessionSecrets   Secrets
-	Interface        string
-	Multipath        bool
-	// Number of time we try to obtain a device path, with CheckInterval seconds between each attempt
-	RetryCount int32
-	// Time (in seconds) between login attempts
-	CheckInterval int32
+	VolumeName       string   `json:"volume_name"`
+	TargetIqn        string   `json:"target_iqn"`
+	TargetPortals    []string `json:"target_portals"`
+	Port             string   `json:"port"`
+	Lun              int32    `json:"lun"`
+	AuthType         string   `json:"auth_type"`
+	DiscoverySecrets Secrets  `json:"discovery_secrets"`
+	SessionSecrets   Secrets  `json:"session_secrets"`
+	Interface        string   `json:"interface"`
+	Multipath        bool     `json:"multipath"`
+	RetryCount       int32    `json:"retry_count"`
+	CheckInterval    int32    `json:"check_interval"`
 }
 
 func init() {
@@ -323,4 +322,37 @@ func Disconnect(tgtIqn string, portals []string) error {
 	}
 	err = DeleteDBEntry(tgtIqn)
 	return err
+}
+
+// PersistConnector persists the provided Connector to the specified file (ie /var/lib/pfile/myConnector.json)
+func PersistConnector(c *Connector, filePath string) error {
+	//file := path.Join("mnt", c.VolumeName+".json")
+	f, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("error creating iscsi persistence file %s: %s", filePath, err)
+	}
+	defer f.Close()
+	encoder := json.NewEncoder(f)
+	if err = encoder.Encode(c); err != nil {
+		return fmt.Errorf("error encoding connector: %v", err)
+	}
+	return nil
+
+}
+
+// GetConnectorFromFile attempts to create a Connector using the specified json file (ie /var/lib/pfile/myConnector.json)
+func GetConnectorFromFile(filePath string) (*Connector, error) {
+	f, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return &Connector{}, err
+
+	}
+	data := Connector{}
+	err = json.Unmarshal([]byte(f), &data)
+	if err != nil {
+		return &Connector{}, err
+	}
+
+	return &data, nil
+
 }
