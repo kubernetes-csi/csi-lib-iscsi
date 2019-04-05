@@ -11,15 +11,15 @@ import (
 // Secrets provides optional iscsi security credentials (CHAP settings)
 type Secrets struct {
 	// SecretsType is the type of Secrets being utilized (currently we only impleemnent "chap"
-	SecretsType string
+	SecretsType string `json:"secretsType,omitempty"`
 	// UserName is the configured iscsi user login
-	UserName string
+	UserName string `json:"userName"`
 	// Password is the configured iscsi password
-	Password string
+	Password string `json:"password"`
 	// UserNameIn provides a specific input login for directional CHAP configurations
-	UserNameIn string
+	UserNameIn string `json:"userNameIn,omitempty"`
 	// PasswordIn provides a specific input password for directional CHAP configurations
-	PasswordIn string
+	PasswordIn string `json:"passwordIn,omitempty"`
 }
 
 // CmdError is a custom error to provide details including the command, stderr output and exit code.
