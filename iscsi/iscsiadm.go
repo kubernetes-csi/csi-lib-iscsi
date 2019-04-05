@@ -3,9 +3,7 @@ package iscsi
 import (
 	"bytes"
 	"fmt"
-	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // Secrets provides optional iscsi security credentials (CHAP settings)
@@ -60,55 +58,16 @@ func iscsiCmd(args ...string) (string, error) {
 		}
 	}
 
-	iscsiadmDebug(args, string(stdout.Bytes()), iscsiadmError)
+	iscsiadmDebug(string(stdout.Bytes()), iscsiadmError)
 	return string(stdout.Bytes()), iscsiadmError
 }
 
-func iscsiadmDebug(args []string, output string, cmdError error) {
+func iscsiadmDebug(output string, cmdError error) {
 	debugOutput := strings.Replace(output, "\n", "\\n", -1)
-	debug.Printf("Output of iscsiadm command: {{cmd: iscsiadm %s}, {output: %s}", args, debugOutput)
+	debug.Printf("Output of iscsiadm command: {output: %s}", debugOutput)
 	if cmdError != nil {
-		debug.Printf("Error message returned from issiadm command: %s", cmdError.Error())
+		debug.Printf("Error message returned from iscsiadm command: %s", cmdError.Error())
 	}
-}
-
-func iscsiCmdHide(args ...string) (string, error) {
-	debug.Printf("Execute iscsiadm %s", args)
-	var waitStatus syscall.WaitStatus
-	var iscsiHelper = "iscsiadm"
-	eStat := 0
-	out := &bytes.Buffer{}
-	cmdErr := &bytes.Buffer{}
-
-	c := execCommand(iscsiHelper, args...)
-	c.Stdout = out
-	c.Stderr = cmdErr
-	iscsiadmErr := CmdError{}
-
-	if err := c.Run(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus = exitError.Sys().(syscall.WaitStatus)
-			eStat = waitStatus.ExitStatus()
-		}
-	} else {
-		waitStatus = c.ProcessState.Sys().(syscall.WaitStatus)
-		eStat = waitStatus.ExitStatus()
-	}
-	if eStat != 0 || string(cmdErr.Bytes()) != "" {
-		iscsiadmErr = CmdError{
-			StdErr:   string(cmdErr.Bytes()),
-			ExitCode: eStat,
-			CMD:      iscsiHelper + " " + strings.Join(args, " "),
-		}
-	}
-	if &iscsiadmErr != nil {
-		debug.Printf("FUCK: %v\n", &iscsiadmErr)
-	}
-	debugOutput := strings.Replace(string(out.Bytes()), "\n", "\\n ", -1)
-	debugStderr := strings.Replace(string(cmdErr.Bytes()), "\n", "\\n ", -1)
-
-	debug.Printf("Response from iscsiadm, {{output: %s}, {stderr: %s}, {exit-code: %d}}", debugOutput, debugStderr, eStat)
-	return string(out.Bytes()), &iscsiadmErr
 }
 
 // ListInterfaces returns a list of all iscsi interfaces configured on the node

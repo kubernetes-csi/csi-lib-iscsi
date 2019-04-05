@@ -273,6 +273,7 @@ func Connect(c Connector) (string, error) {
 		// create db entry
 		args := append(baseArgs, []string{"-I", iFace, "-o", "new"}...)
 		debug.Printf("create the new record: %s\n", args)
+		// Make sure we don't log the secrets
 		err := CreateDBEntry(c.TargetIqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
