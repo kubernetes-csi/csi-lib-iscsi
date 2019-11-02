@@ -46,6 +46,8 @@ type Connector struct {
 	Multipath        bool     `json:"multipath"`
 	RetryCount       int32    `json:"retry_count"`
 	CheckInterval    int32    `json:"check_interval"`
+	Discovery        bool     `json:"discovery"`
+	CHAPDiscovery    bool     `json:"chap_discovery"`
 }
 
 func init() {
@@ -221,7 +223,7 @@ func getMultipathDisk(path string) (string, error) {
 
 // Connect attempts to connect a volume to this node using the provided Connector info
 func Connect(c Connector) (string, error) {
-
+	var lastErr error
 	if c.RetryCount == 0 {
 		c.RetryCount = 10
 	}
@@ -249,6 +251,11 @@ func Connect(c Connector) (string, error) {
 	for _, p := range c.TargetPortals {
 		debug.Printf("process portal: %s\n", p)
 		baseArgs := []string{"-m", "node", "-T", c.TargetIqn, "-p", p}
+		// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
+		// to avoid establishing additional sessions to the same target.
+		if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
+			debug.Printf("failed to rescan session, err: %v", err)
+		}
 
 		// create our devicePath that we'll be looking for based on the transport being used
 		if c.Port != "" {
@@ -270,31 +277,45 @@ func Connect(c Connector) (string, error) {
 			}
 		}
 
-		// create db entry
-		args := append(baseArgs, []string{"-I", iFace, "-o", "new"}...)
-		debug.Printf("create the new record: %s\n", args)
+		if c.Discovery {
+			// build discoverydb and discover iscsi target
+			if err := Discovery(p, iFace, c.DiscoverySecrets, c.CHAPDiscovery); err != nil {
+				debug.Printf("Error in discovery of the target: %s\n", err.Error())
+				lastErr = err
+				continue
+			}
+		}
+
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(c.TargetIqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets)
+		err := CreateDBEntry(c.TargetIqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.CHAPDiscovery)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
 			continue
 		}
+
 		// perform the login
 		err = Login(c.TargetIqn, p)
 		if err != nil {
-			return "", err
+			debug.Printf("failed to login, err: %v", err)
+			lastErr = err
+			continue
 		}
 		retries := int(c.RetryCount / c.CheckInterval)
 		if exists, err := waitForPathToExist(&devicePath, retries, int(c.CheckInterval), iscsiTransport); exists {
 			devicePaths = append(devicePaths, devicePath)
 			continue
 		} else if err != nil {
-			return "", err
+			lastErr = fmt.Errorf("Couldn't attach disk, err: %v", err)
 		}
-		if len(devicePaths) < 1 {
-			return "", fmt.Errorf("failed to find device path: %s", devicePath)
-		}
+	}
 
+	if len(devicePaths) < 1 {
+		iscsiCmd([]string{"-m", "iface", "-I", iFace, "-o", "delete"}...)
+		return "", fmt.Errorf("failed to find device path: %s, last error seen: %v", devicePaths, lastErr)
+	}
+
+	if lastErr != nil {
+		debug.Printf("Last error occured during iscsi init: \n%v", lastErr)
 	}
 
 	for i, path := range devicePaths {

@@ -88,13 +88,17 @@ func ShowInterface(iface string) (string, error) {
 }
 
 // CreateDBEntry sets up a node entry for the specified tgt in the nodes iscsi nodes db
-func CreateDBEntry(tgtIQN, portal, iFace string, discoverySecrets, sessionSecrets Secrets) error {
+func CreateDBEntry(tgtIQN, portal, iFace string, discoverySecrets, sessionSecrets Secrets, chapDiscovery bool) error {
 	debug.Println("Begin CreateDBEntry...")
+	if !chapDiscovery {
+		return nil
+	}
 	baseArgs := []string{"-m", "node", "-T", tgtIQN, "-p", portal}
 	_, err := iscsiCmd(append(baseArgs, []string{"-I", iFace, "-o", "new"}...)...)
 	if err != nil {
 		return err
 	}
+
 	if discoverySecrets.SecretsType == "chap" {
 		debug.Printf("Setting CHAP Discovery...")
 		createCHAPEntries(baseArgs, discoverySecrets, true)
@@ -103,10 +107,44 @@ func CreateDBEntry(tgtIQN, portal, iFace string, discoverySecrets, sessionSecret
 	if sessionSecrets.SecretsType == "chap" {
 		debug.Printf("Setting CHAP Session...")
 		createCHAPEntries(baseArgs, sessionSecrets, false)
-
 	}
+
 	return err
 
+}
+
+func updateISCSIDiscoverydb(tp, iface string, discoverySecrets Secrets) error {
+	baseArgs := []string{"-m", "discoverydb", "-t", "sendtargets", "-p", tp, "-I", iface}
+	_, err := iscsiCmd(append(baseArgs, []string{"-o", "update", "-n", "discovery.sendtargets.auth.authmethod", "-v", "CHAP"}...)...)
+	if err != nil {
+		return fmt.Errorf("failed to update discoverydb with CHAP, err: %v", err)
+	}
+
+	return createCHAPEntries(baseArgs, discoverySecrets, true)
+}
+
+// Discovery discover the iscsi target
+func Discovery(tp, iface string, discoverySecrets Secrets, chapDiscovery bool) error {
+	debug.Println("Begin Discovery...")
+	baseArgs := []string{"-m", "discoverydb", "-t", "sendtargets", "-p", tp, "-I", iface}
+	out, err := iscsiCmd(append(baseArgs, []string{"-o", "new"}...)...)
+	if err != nil {
+		return fmt.Errorf("failed to create new entry of target in discoverydb, output: %v, err: %v", string(out), err)
+	}
+
+	if chapDiscovery {
+		if err := updateISCSIDiscoverydb(tp, iface, discoverySecrets); err != nil {
+			return err
+		}
+	}
+
+	_, err = iscsiCmd(append(baseArgs, []string{"--discover"}...)...)
+	if err != nil {
+		//delete the discoverydb record
+		iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
+		return fmt.Errorf("failed to sendtargets to portal %s, err: %v", tp, err)
+	}
+	return nil
 }
 
 func createCHAPEntries(baseArgs []string, secrets Secrets, discovery bool) error {
@@ -114,14 +152,14 @@ func createCHAPEntries(baseArgs []string, secrets Secrets, discovery bool) error
 	debug.Printf("Begin createCHAPEntries (discovery=%t)...", discovery)
 	if discovery {
 		args = append(baseArgs, []string{"-o", "update",
-			"-n", "node.discovery.auth.authmethod", "-v", "CHAP",
-			"-n", "node.discovery.auth.username", "-v", secrets.UserName,
-			"-n", "node.discovery.auth.password", "-v", secrets.Password}...)
+			"-n", "discovery.sendtargets.auth.authmethod", "-v", "CHAP",
+			"-n", "discovery.sendtargets.auth.username", "-v", secrets.UserName,
+			"-n", "discovery.sendtargets.auth.password", "-v", secrets.Password}...)
 		if secrets.UserNameIn != "" {
-			args = append(args, []string{"-n", "node.discovery.auth.username_in", "-v", secrets.UserNameIn}...)
+			args = append(args, []string{"-n", "discovery.sendtargets.auth.username_in", "-v", secrets.UserNameIn}...)
 		}
-		if secrets.UserNameIn != "" {
-			args = append(args, []string{"-n", "node.discovery.auth.password_in", "-v", secrets.PasswordIn}...)
+		if secrets.PasswordIn != "" {
+			args = append(args, []string{"-n", "discovery.sendtargets.auth.password_in", "-v", secrets.PasswordIn}...)
 		}
 
 	} else {
@@ -133,13 +171,17 @@ func createCHAPEntries(baseArgs []string, secrets Secrets, discovery bool) error
 		if secrets.UserNameIn != "" {
 			args = append(args, []string{"-n", "node.session.auth.username_in", "-v", secrets.UserNameIn}...)
 		}
-		if secrets.UserNameIn != "" {
+		if secrets.PasswordIn != "" {
 			args = append(args, []string{"-n", "node.session.auth.password_in", "-v", secrets.PasswordIn}...)
 		}
 	}
-	_, err := iscsiCmd(args...)
-	return err
 
+	_, err := iscsiCmd(args...)
+	if err != nil {
+		return fmt.Errorf("failed to update discoverydb with CHAP, err: %v", err)
+	}
+
+	return nil
 }
 
 // GetSessions retrieves a list of current iscsi sessions on the node
@@ -151,7 +193,13 @@ func GetSessions() (string, error) {
 
 // Login performs an iscsi login for the specified target
 func Login(tgtIQN, portal string) error {
-	_, err := iscsiCmd([]string{"-m", "node", "-T", tgtIQN, "-p", portal, "-l"}...)
+	baseArgs := []string{"-m", "node", "-T", tgtIQN, "-p", portal}
+	_, err := iscsiCmd(append(baseArgs, []string{"-l"}...)...)
+	if err != nil {
+		//delete the node record from database
+		iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
+		return fmt.Errorf("failed to sendtargets to portal %s, err: %v", portal, err)
+	}
 	return err
 }
 
@@ -173,5 +221,11 @@ func DeleteDBEntry(tgtIQN string) error {
 	args := []string{"-m", "node", "-T", tgtIQN, "-o", "delete"}
 	iscsiCmd(args...)
 	return nil
+}
 
+// DeleteIFace delete the iface
+func DeleteIFace(iface string) error {
+	debug.Println("Begin DeleteIFace...")
+	iscsiCmd([]string{"-m", "iface", "-I", iface, "-o", "delete"}...)
+	return nil
 }
