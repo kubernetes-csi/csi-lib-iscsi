@@ -13,3 +13,6 @@ build:
 install:
 	go install ./iscsi/
 
+test:
+	go test ./iscsi/
+
