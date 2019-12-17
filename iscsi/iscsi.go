@@ -96,7 +96,6 @@ func sessionExists(tgtPortal, tgtIQN string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var existingSessions []iscsiSession
 	for _, s := range sessions {
 		if tgtIQN == s.IQN && tgtPortal == s.Portal {
 			return true, nil
