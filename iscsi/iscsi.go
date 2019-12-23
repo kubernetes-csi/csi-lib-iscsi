@@ -269,13 +269,13 @@ func Connect(c Connector) (string, error) {
 			port = target.Port
 		}
 		// portal with port
-		portal := strings.Join([]string{target.Portal, port}, ":")
-		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+		p := strings.Join([]string{target.Portal, port}, ":")
+		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		if iscsiTransport != "tcp" {
-			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		}
 
-		exists, _ := sessionExists(portal, target.Iqn)
+		exists, _ := sessionExists(p, target.Iqn)
 		if exists {
 			if exists, err := waitForPathToExist(&devicePath, 1, 1, iscsiTransport); exists {
 				debug.Printf("Appending device path: %s", devicePath)
@@ -288,7 +288,7 @@ func Connect(c Connector) (string, error) {
 
 		if c.DoDiscovery {
 			// build discoverydb and discover iscsi target
-			if err := Discovery(portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+			if err := Discovery(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 				debug.Printf("Error in discovery of the target: %s\n", err.Error())
 				lastErr = err
 				continue
@@ -296,14 +296,14 @@ func Connect(c Connector) (string, error) {
 		}
 
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(target.Iqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
+		err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
 			continue
 		}
 
 		// perform the login
-		err = Login(target.Iqn, portal)
+		err = Login(target.Iqn, p)
 		if err != nil {
 			debug.Printf("failed to login, err: %v", err)
 			lastErr = err
