@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const defaultPort = "3260"
+
 var (
 	debug       *log.Logger
 	execCommand = exec.Command
@@ -33,14 +35,15 @@ type iscsiSession struct {
 }
 
 type TargetInfo struct {
-	Iqn, Portal string
+	Iqn    string `json:"iqn"`
+	Portal string `json:"portal"`
+	Port   string `json:"port"`
 }
 
 //Connector provides a struct to hold all of the needed parameters to make our iscsi connection
 type Connector struct {
 	VolumeName       string       `json:"volume_name"`
 	Targets          []TargetInfo `json:"targets"`
-	Port             string       `json:"port"`
 	Lun              int32        `json:"lun"`
 	AuthType         string       `json:"auth_type"`
 	DiscoverySecrets Secrets      `json:"discovery_secrets"`
@@ -253,7 +256,7 @@ func Connect(c Connector) (string, error) {
 
 	for _, target := range c.Targets {
 		debug.Printf("process targetIqn: %s, portal: %s\n", target.Iqn, target.Portal)
-		baseArgs := []string{"-m", "node", "-T", target.Iqn, "-target.Portal", target.Portal}
+		baseArgs := []string{"-m", "node", "-T", target.Iqn, "-p", target.Portal}
 		// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
 		// to avoid establishing additional sessions to the same target.
 		if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
@@ -261,15 +264,18 @@ func Connect(c Connector) (string, error) {
 		}
 
 		// create our devicePath that we'll be looking for based on the transport being used
-		if c.Port != "" {
-			target.Portal = strings.Join([]string{target.Portal, c.Port}, ":")
+		port := defaultPort
+		if target.Port != "" {
+			port = target.Port
 		}
-		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", target.Portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+		// portal with port
+		portal := strings.Join([]string{target.Portal, port}, ":")
+		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		if iscsiTransport != "tcp" {
-			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", target.Portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		}
 
-		exists, _ := sessionExists(target.Portal, target.Iqn)
+		exists, _ := sessionExists(portal, target.Iqn)
 		if exists {
 			if exists, err := waitForPathToExist(&devicePath, 1, 1, iscsiTransport); exists {
 				debug.Printf("Appending device path: %s", devicePath)
@@ -282,7 +288,7 @@ func Connect(c Connector) (string, error) {
 
 		if c.DoDiscovery {
 			// build discoverydb and discover iscsi target
-			if err := Discovery(target.Portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+			if err := Discovery(portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 				debug.Printf("Error in discovery of the target: %s\n", err.Error())
 				lastErr = err
 				continue
@@ -290,14 +296,14 @@ func Connect(c Connector) (string, error) {
 		}
 
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(target.Iqn, target.Portal, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
+		err := CreateDBEntry(target.Iqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
 			continue
 		}
 
 		// perform the login
-		err = Login(target.Iqn, target.Portal)
+		err = Login(target.Iqn, portal)
 		if err != nil {
 			debug.Printf("failed to login, err: %v", err)
 			lastErr = err
