@@ -52,7 +52,7 @@ type Connector struct {
 	Multipath        bool         `json:"multipath"`
 	RetryCount       int32        `json:"retry_count"`
 	CheckInterval    int32        `json:"check_interval"`
-	DoDiscovery      bool         `json:"do_discovery"`
+	DoDiscoverydb    bool         `json:"do_discovery"`
 	DoCHAPDiscovery  bool         `json:"do_chap_discovery"`
 }
 
@@ -281,20 +281,22 @@ func Connect(c Connector) (string, error) {
 			}
 		}
 
-		if c.DoDiscovery {
+		if c.DoDiscoverydb {
 			// build discoverydb and discover iscsi target
-			if err := Discovery(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+			if err := Discoverydb(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 				debug.Printf("Error in discovery of the target: %s\n", err.Error())
 				lastErr = err
 				continue
 			}
 		}
 
-		// Make sure we don't log the secrets
-		err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
-		if err != nil {
-			debug.Printf("Error creating db entry: %s\n", err.Error())
-			continue
+		if c.DoCHAPDiscovery {
+			// Make sure we don't log the secrets
+			err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets)
+			if err != nil {
+				debug.Printf("Error creating db entry: %s\n", err.Error())
+				continue
+			}
 		}
 
 		// perform the login

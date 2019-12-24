@@ -65,9 +65,9 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 		t.Run(name, func(t *testing.T) {
 			mockedExitStatus = tt.mockedExitStatus
 			mockedStdout = tt.mockedStdout
-			err := Discovery(tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
+			err := Discoverydb(tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Discovery() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Discoverydb() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
@@ -82,19 +82,10 @@ func TestCreateDBEntry(t *testing.T) {
 		iface            string
 		discoverySecret  Secrets
 		sessionSecret    Secrets
-		chapDiscovery    bool
 		wantErr          bool
 		mockedStdout     string
 		mockedExitStatus int
 	}{
-		"CreateDBEntrySuccess": {
-			tgtPortal:        "192.168.1.107:3260",
-			tgtIQN:           "iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced",
-			iface:            "default",
-			chapDiscovery:    false,
-			mockedStdout:     nodeDB,
-			mockedExitStatus: 0,
-		},
 		"CreateDBEntryWithChapDiscoverySuccess": {
 			tgtPortal: "192.168.1.107:3260",
 			tgtIQN:    "iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced",
@@ -109,7 +100,6 @@ func TestCreateDBEntry(t *testing.T) {
 				PasswordIn:  "dummypass",
 				SecretsType: "chap",
 			},
-			chapDiscovery:    true,
 			mockedStdout:     nodeDB,
 			mockedExitStatus: 0,
 		},
@@ -117,7 +107,6 @@ func TestCreateDBEntry(t *testing.T) {
 			tgtPortal:        "172.18.0.2:3260",
 			tgtIQN:           "iqn.2016-09.com.openebs.jiva:store1",
 			iface:            "default",
-			chapDiscovery:    true,
 			mockedStdout:     "iscsiadm: No records found\n",
 			mockedExitStatus: 21,
 			wantErr:          true,
@@ -128,7 +117,7 @@ func TestCreateDBEntry(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			mockedExitStatus = tt.mockedExitStatus
 			mockedStdout = tt.mockedStdout
-			err := CreateDBEntry(tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret, tt.chapDiscovery)
+			err := CreateDBEntry(tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateDBEntry() error = %v, wantErr %v", err, tt.wantErr)
 				return
