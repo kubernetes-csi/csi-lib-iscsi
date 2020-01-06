@@ -102,17 +102,12 @@ func sessionExists(tgtPortal, tgtIQN string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var existingSessions []iscsiSession
 	for _, s := range sessions {
 		if tgtIQN == s.IQN && tgtPortal == s.Portal {
-			existingSessions = append(existingSessions, s)
+			return true, nil
 		}
 	}
-	exists := false
-	if len(existingSessions) > 0 {
-		exists = true
-	}
-	return exists, nil
+	return false, nil
 }
 
 func extractTransportName(output string) string {
@@ -136,8 +131,8 @@ func getCurrentSessions() ([]iscsiSession, error) {
 		}
 		return nil, err
 	}
-	session := parseSessions(out)
-	return session, err
+	sessions := parseSessions(out)
+	return sessions, err
 }
 
 func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds int, deviceTransport string) (bool, error) {
@@ -154,7 +149,7 @@ func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds int,
 		err = nil
 		if deviceTransport == "tcp" {
 			_, err = osStat(*devicePath)
-			if err != nil && !strings.Contains(err.Error(), "no such file or directory") {
+			if err != nil && !os.IsNotExist(err) {
 				debug.Printf("Error attempting to stat device: %s", err.Error())
 				return false, err
 			} else if err != nil {
