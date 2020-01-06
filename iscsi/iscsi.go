@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const defaultPort = "3260"
+
 var (
 	debug       *log.Logger
 	execCommand = exec.Command
@@ -32,22 +34,26 @@ type iscsiSession struct {
 	Name     string
 }
 
+type TargetInfo struct {
+	Iqn    string `json:"iqn"`
+	Portal string `json:"portal"`
+	Port   string `json:"port"`
+}
+
 //Connector provides a struct to hold all of the needed parameters to make our iscsi connection
 type Connector struct {
-	VolumeName       string   `json:"volume_name"`
-	TargetIqn        string   `json:"target_iqn"`
-	TargetPortals    []string `json:"target_portals"`
-	Port             string   `json:"port"`
-	Lun              int32    `json:"lun"`
-	AuthType         string   `json:"auth_type"`
-	DiscoverySecrets Secrets  `json:"discovery_secrets"`
-	SessionSecrets   Secrets  `json:"session_secrets"`
-	Interface        string   `json:"interface"`
-	Multipath        bool     `json:"multipath"`
-	RetryCount       int32    `json:"retry_count"`
-	CheckInterval    int32    `json:"check_interval"`
-	DoDiscovery      bool     `json:"do_discovery"`
-	DoCHAPDiscovery  bool     `json:"do_chap_discovery"`
+	VolumeName       string       `json:"volume_name"`
+	Targets          []TargetInfo `json:"targets"`
+	Lun              int32        `json:"lun"`
+	AuthType         string       `json:"auth_type"`
+	DiscoverySecrets Secrets      `json:"discovery_secrets"`
+	SessionSecrets   Secrets      `json:"session_secrets"`
+	Interface        string       `json:"interface"`
+	Multipath        bool         `json:"multipath"`
+	RetryCount       int32        `json:"retry_count"`
+	CheckInterval    int32        `json:"check_interval"`
+	DoDiscovery      bool         `json:"do_discovery"`
+	DoCHAPDiscovery  bool         `json:"do_chap_discovery"`
 }
 
 func init() {
@@ -248,9 +254,9 @@ func Connect(c Connector) (string, error) {
 	}
 	iscsiTransport := extractTransportName(out)
 
-	for _, p := range c.TargetPortals {
-		debug.Printf("process portal: %s\n", p)
-		baseArgs := []string{"-m", "node", "-T", c.TargetIqn, "-p", p}
+	for _, target := range c.Targets {
+		debug.Printf("process targetIqn: %s, portal: %s\n", target.Iqn, target.Portal)
+		baseArgs := []string{"-m", "node", "-T", target.Iqn, "-p", target.Portal}
 		// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
 		// to avoid establishing additional sessions to the same target.
 		if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
@@ -258,15 +264,18 @@ func Connect(c Connector) (string, error) {
 		}
 
 		// create our devicePath that we'll be looking for based on the transport being used
-		if c.Port != "" {
-			p = strings.Join([]string{p, c.Port}, ":")
+		port := defaultPort
+		if target.Port != "" {
+			port = target.Port
 		}
-		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", p, "iscsi", c.TargetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
+		// portal with port
+		p := strings.Join([]string{target.Portal, port}, ":")
+		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		if iscsiTransport != "tcp" {
-			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", p, "iscsi", c.TargetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
+			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
 		}
 
-		exists, _ := sessionExists(p, c.TargetIqn)
+		exists, _ := sessionExists(p, target.Iqn)
 		if exists {
 			if exists, err := waitForPathToExist(&devicePath, 1, 1, iscsiTransport); exists {
 				debug.Printf("Appending device path: %s", devicePath)
@@ -287,14 +296,14 @@ func Connect(c Connector) (string, error) {
 		}
 
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(c.TargetIqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
+		err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
 			continue
 		}
 
 		// perform the login
-		err = Login(c.TargetIqn, p)
+		err = Login(target.Iqn, p)
 		if err != nil {
 			debug.Printf("failed to login, err: %v", err)
 			lastErr = err
