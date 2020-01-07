@@ -1,6 +1,6 @@
 # csi lib-iscsi
 
-[![Build Status](https://travis-ci.com/27149chen/csi-lib-iscsi.svg?branch=master)](https://travis-ci.com/27149chen/csi-lib-iscsi)
+[![Build Status](https://travis-ci.com/kubernetes-csi/csi-lib-iscsi.svg?branch=master)](https://travis-ci.com/kubernetes-csi/csi-lib-iscsi)
 
 A simple go package intended to assist CSI plugin authors by providing a tool set to manage iscsi connections.
 
