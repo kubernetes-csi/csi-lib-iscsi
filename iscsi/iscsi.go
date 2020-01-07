@@ -52,7 +52,7 @@ type Connector struct {
 	Multipath        bool         `json:"multipath"`
 	RetryCount       int32        `json:"retry_count"`
 	CheckInterval    int32        `json:"check_interval"`
-	DoDiscoverydb    bool         `json:"do_discovery"`
+	DoDiscovery      bool         `json:"do_discovery"`
 	DoCHAPDiscovery  bool         `json:"do_chap_discovery"`
 }
 
@@ -281,7 +281,7 @@ func Connect(c Connector) (string, error) {
 			}
 		}
 
-		if c.DoDiscoverydb {
+		if c.DoDiscovery {
 			// build discoverydb and discover iscsi target
 			if err := Discoverydb(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 				debug.Printf("Error in discovery of the target: %s\n", err.Error())
