@@ -65,8 +65,8 @@ func GetSysDevicesFromMultipathDevice(device string) ([]string, error) {
 	return s, nil
 }
 
-// Flush flushes a multipath device dm-x with command multipath -f /dev/dm-x
-func Flush(device string) error {
+// FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
+func FlushMultipathDevice(device string) error {
 	debug.Printf("Flushing multipath device '%v'.\n", device)
 
 	fullDevice := filepath.Join(devPath, device)

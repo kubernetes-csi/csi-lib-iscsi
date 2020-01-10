@@ -366,8 +366,11 @@ func DisconnectVolume(c Connector) error {
 	//
 	// DisconnectVolume focuses on step 2 and 3.
 	// Note: make sure the volume is already unmounted before calling this method.
+
+	debug.Printf("Disconnecting volume in path %s.\n", c.DevicePath)
 	if c.Multipath {
-		err := Flush(c.DevicePath)
+		debug.Printf("Removing multipath device.\n")
+		err := FlushMultipathDevice(c.DevicePath)
 		if err != nil {
 			return err
 		}
@@ -375,9 +378,19 @@ func DisconnectVolume(c Connector) error {
 		if err != nil {
 			return err
 		}
-		return RemovePhysicalDevice(devices...)
+		debug.Printf("Found multipath slaves %v, removing all of them.\n", devices)
+		if err := RemovePhysicalDevice(devices...); err != nil {
+			return err
+		}
+	} else {
+		debug.Printf("Removing normal device.\n")
+		if err := RemovePhysicalDevice(c.DevicePath); err != nil {
+			return err
+		}
 	}
-	return RemovePhysicalDevice(c.DevicePath)
+
+	debug.Printf("Finished disconnecting volume.\n")
+	return nil
 }
 
 // RemovePhysicalDevice removes device(s) sdx from a Linux host.
@@ -413,7 +426,7 @@ func RemovePhysicalDevice(devices ...string) error {
 	if len(errs) > 0 {
 		return errs[0]
 	}
-	debug.Println("Finshed to remove SCSI devices.")
+	debug.Println("Finshed removing SCSI devices.")
 	return nil
 }
 
