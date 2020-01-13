@@ -405,7 +405,7 @@ func RemovePhysicalDevice(devices ...string) error {
 		debug.Printf("Delete scsi device %v.\n", deviceName)
 		// Remove a scsi device by executing 'echo "1" > /sys/block/sdx/device/delete
 		filename := filepath.Join(sysBlockPath, deviceName, "device", "delete")
-		if f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0200); err != nil {
+		if f, err := os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, 0200); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			} else {
