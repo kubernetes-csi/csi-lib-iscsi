@@ -328,21 +328,6 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 
 func Test_DisconnectMultipathVolume(t *testing.T) {
 
-	tmpDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Errorf("can not create temp directory: %v", err)
-		return
-	}
-	sysBlockPath = tmpDir
-	devPath = filepath.Join(tmpDir, "dev")
-	defer os.RemoveAll(tmpDir)
-
-	err = preparePaths(tmpDir)
-	if err != nil {
-		t.Errorf("can not create temp directories and files: %v", err)
-		return
-	}
-
 	execWithTimeout = fakeExecWithTimeout
 	devicePath := multipathDevice
 
@@ -356,10 +341,25 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 		{"DisconnectMultipathVolume", false, false, false, nil},
 		{"DisconnectMultipathVolumeFlushFailed", false, false, true, fmt.Errorf("error")},
 		{"DisconnectMultipathVolumeFlushTimeout", true, false, true, nil},
-		{"DisconnectNonexistentMultipathVolume", false, false, true, fmt.Errorf("error")},
+		{"DisconnectNonexistentMultipathVolume", false, true, false, fmt.Errorf("error")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+
+			tmpDir, err := ioutil.TempDir("", "")
+			if err != nil {
+				t.Errorf("can not create temp directory: %v", err)
+				return
+			}
+			sysBlockPath = tmpDir
+			devPath = filepath.Join(tmpDir, "dev")
+			defer os.RemoveAll(tmpDir)
+
+			err = preparePaths(tmpDir)
+			if err != nil {
+				t.Errorf("can not create temp directories and files: %v", err)
+				return
+			}
 			testExecWithTimeoutError = tt.cmdError
 			testCmdTimeout = tt.timeout
 			if tt.removeDevice {
@@ -367,7 +367,7 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 				os.RemoveAll(devPath)
 			}
 			c := Connector{Multipath: true, DevicePath: devicePath}
-			err := DisconnectVolume(c)
+			err = DisconnectVolume(c)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -379,7 +379,7 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 				}
 			}
 
-			if !tt.removeDevice {
+			if !tt.removeDevice && !tt.wantErr {
 				for _, s := range slaves {
 					deleteFile := filepath.Join(sysBlockPath, s, "device", "delete")
 					out, err := ioutil.ReadFile(deleteFile)
