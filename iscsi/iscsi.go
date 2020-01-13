@@ -283,18 +283,20 @@ func Connect(c Connector) (string, error) {
 
 		if c.DoDiscovery {
 			// build discoverydb and discover iscsi target
-			if err := Discovery(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+			if err := Discoverydb(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 				debug.Printf("Error in discovery of the target: %s\n", err.Error())
 				lastErr = err
 				continue
 			}
 		}
 
-		// Make sure we don't log the secrets
-		err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets, c.DoCHAPDiscovery)
-		if err != nil {
-			debug.Printf("Error creating db entry: %s\n", err.Error())
-			continue
+		if c.DoCHAPDiscovery {
+			// Make sure we don't log the secrets
+			err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets)
+			if err != nil {
+				debug.Printf("Error creating db entry: %s\n", err.Error())
+				continue
+			}
 		}
 
 		// perform the login
