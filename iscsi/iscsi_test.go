@@ -83,6 +83,12 @@ var testCmdError error
 var mockedExitStatus = 0
 var mockedStdout string
 
+func init() {
+	if os.Getenv("DEBUG") == "true" {
+		EnableDebugLogging(os.Stderr)
+	}
+}
+
 type testCmdRunner struct{}
 
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
