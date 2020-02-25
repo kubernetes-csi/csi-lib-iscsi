@@ -84,13 +84,17 @@ func parseSessions(lines string) []iscsiSession {
 		id := r.Replace(e[1])
 		id64, _ := strconv.ParseInt(id, 10, 32)
 		portal := strings.Split(e[2], ",")[0]
+		var name string
+		if splits := strings.SplitN(e[3], ":", 2); len(splits) > 1 {
+			name = splits[1]
+		}
 
 		s := iscsiSession{
 			Protocol: protocol,
 			ID:       int32(id64),
 			Portal:   portal,
 			IQN:      e[3],
-			Name:     strings.Split(e[3], ":")[1],
+			Name:     name,
 		}
 		sessions = append(sessions, s)
 	}
