@@ -370,11 +370,11 @@ func DisconnectVolume(c Connector) error {
 	debug.Printf("Disconnecting volume in path %s.\n", c.DevicePath)
 	if c.Multipath {
 		debug.Printf("Removing multipath device.\n")
-		err := FlushMultipathDevice(c.DevicePath)
+		devices, err := GetSysDevicesFromMultipathDevice(c.DevicePath)
 		if err != nil {
 			return err
 		}
-		devices, err := GetSysDevicesFromMultipathDevice(c.DevicePath)
+		err := FlushMultipathDevice(c.DevicePath)
 		if err != nil {
 			return err
 		}
