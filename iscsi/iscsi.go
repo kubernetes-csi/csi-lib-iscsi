@@ -19,8 +19,9 @@ import (
 const defaultPort = "3260"
 
 var (
-	debug       *log.Logger
-	execCommand = exec.Command
+	debug           *log.Logger
+	execCommand     = exec.Command
+	execWithTimeout = ExecWithTimeout
 )
 
 type statFunc func(string) (os.FileInfo, error)
@@ -50,10 +51,14 @@ type Connector struct {
 	SessionSecrets   Secrets      `json:"session_secrets"`
 	Interface        string       `json:"interface"`
 	Multipath        bool         `json:"multipath"`
-	RetryCount       int32        `json:"retry_count"`
-	CheckInterval    int32        `json:"check_interval"`
-	DoDiscovery      bool         `json:"do_discovery"`
-	DoCHAPDiscovery  bool         `json:"do_chap_discovery"`
+
+	// DevicePath is dm-x for a multipath device, and sdx for a normal device.
+	DevicePath string `json:"device_path"`
+
+	RetryCount      int32 `json:"retry_count"`
+	CheckInterval   int32 `json:"check_interval"`
+	DoDiscovery     bool  `json:"do_discovery"`
+	DoCHAPDiscovery bool  `json:"do_chap_discovery"`
 }
 
 func init() {
@@ -350,6 +355,81 @@ func Disconnect(tgtIqn string, portals []string) error {
 	}
 	err = DeleteDBEntry(tgtIqn)
 	return err
+}
+
+// DisconnectVolume removes a volume from a Linux host.
+func DisconnectVolume(c Connector) error {
+	// Steps to safely remove an iSCSI storage volume from a Linux host are as following:
+	// 1. Unmount the disk from a filesystem on the system.
+	// 2. Flush the multipath map for the disk we’re removing (if multipath is enabled).
+	// 3. Remove the physical disk entities that Linux maintains.
+	// 4. Take the storage volume (disk) offline on the storage subsystem.
+	// 5. Rescan the iSCSI sessions.
+	//
+	// DisconnectVolume focuses on step 2 and 3.
+	// Note: make sure the volume is already unmounted before calling this method.
+
+	debug.Printf("Disconnecting volume in path %s.\n", c.DevicePath)
+	if c.Multipath {
+		debug.Printf("Removing multipath device.\n")
+		devices, err := GetSysDevicesFromMultipathDevice(c.DevicePath)
+		if err != nil {
+			return err
+		}
+		err := FlushMultipathDevice(c.DevicePath)
+		if err != nil {
+			return err
+		}
+		debug.Printf("Found multipath slaves %v, removing all of them.\n", devices)
+		if err := RemovePhysicalDevice(devices...); err != nil {
+			return err
+		}
+	} else {
+		debug.Printf("Removing normal device.\n")
+		if err := RemovePhysicalDevice(c.DevicePath); err != nil {
+			return err
+		}
+	}
+
+	debug.Printf("Finished disconnecting volume.\n")
+	return nil
+}
+
+// RemovePhysicalDevice removes device(s) sdx from a Linux host.
+func RemovePhysicalDevice(devices ...string) error {
+	debug.Printf("Removing scsi device %v.\n", devices)
+	var errs []error
+	for _, deviceName := range devices {
+		if deviceName == "" {
+			continue
+		}
+
+		debug.Printf("Delete scsi device %v.\n", deviceName)
+		// Remove a scsi device by executing 'echo "1" > /sys/block/sdx/device/delete
+		filename := filepath.Join(sysBlockPath, deviceName, "device", "delete")
+		if f, err := os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, 0200); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			} else {
+				debug.Printf("Error while opening file %v: %v\n", filename, err)
+				errs = append(errs, err)
+				continue
+			}
+		} else {
+			defer f.Close()
+			if _, err := f.WriteString("1"); err != nil {
+				debug.Printf("Error while writing to file %v: %v", filename, err)
+				errs = append(errs, err)
+				continue
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	debug.Println("Finshed removing SCSI devices.")
+	return nil
 }
 
 // PersistConnector persists the provided Connector to the specified file (ie /var/lib/pfile/myConnector.json)
