@@ -376,7 +376,7 @@ func DisconnectVolume(c Connector) error {
 		if err != nil {
 			return err
 		}
-		err := FlushMultipathDevice(c.DevicePath)
+		err = FlushMultipathDevice(c.DevicePath)
 		if err != nil {
 			return err
 		}
