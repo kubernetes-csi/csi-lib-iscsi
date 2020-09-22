@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -27,15 +28,19 @@ func main() {
 		iscsi.EnableDebugLogging(os.Stdout)
 	}
 
+	targets, err := parseTargets(tgtp, *iqn)
+	if err != nil {
+		log.Printf("Failed to parse portals: %s.", err)
+		os.Exit(1)
+	}
+
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
 	// you can simplify interactions to simple calls like "Connect" and "Disconnect"
 	c := iscsi.Connector{
 		// Our example uses chap
 		AuthType: "chap",
-		// Specify the target iqn we're dealing with
-		TargetIqn: *iqn,
-		// List of portals must be >= 1 (>1 signals multipath/mpio)
-		TargetPortals: tgtp,
+		// List of targets must be >= 1 (>1 signals multipath/mpio)
+		Targets: targets,
 		// CHAP can be setup up for discovery as well as sessions, our example
 		// device only uses CHAP security for sessions, for those that use Discovery
 		// as well, we'd add a DiscoverySecrets entry the same way
@@ -71,5 +76,27 @@ func main() {
 
 	// Disconnect is easy as well, we don't need the full Connector any more, just the Target IQN and the Portals
 	/// this should disconnect the volume as well as clear out the iscsi DB entries associated with it
-	iscsi.Disconnect(c.TargetIqn, c.TargetPortals)
+	iscsi.Disconnect(*iqn, tgtp)
+}
+
+func parseTargets(portals []string, iqn string) ([]iscsi.TargetInfo, error) {
+	result := make([]iscsi.TargetInfo, len(portals))
+	for i, t := range portals {
+		parts := strings.Split(t, ":")
+		portal := parts[0]
+		port := "3260"
+		if len(parts) > 2 {
+			return nil, fmt.Errorf("wrong portal format: %s", t)
+		}
+		if len(parts) == 2 {
+			port = parts[1]
+		}
+
+		result[i] = iscsi.TargetInfo{
+			Iqn:    iqn,
+			Portal: portal,
+			Port:   port,
+		}
+	}
+	return result, nil
 }
