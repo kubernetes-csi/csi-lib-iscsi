@@ -33,6 +33,10 @@ func main() {
 		log.Printf("Failed to parse portals: %s.", err)
 		os.Exit(1)
 	}
+	if len(targets) == 0 {
+		log.Printf("No portals specified.")
+		os.Exit(1)
+	}
 
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
 	// you can simplify interactions to simple calls like "Connect" and "Disconnect"
