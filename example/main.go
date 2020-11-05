@@ -22,9 +22,21 @@ var (
 
 func main() {
 	flag.Parse()
-	tgtp := strings.Split(*portals, ",")
+	tgtps := strings.Split(*portals, ",")
 	if *debug {
 		iscsi.EnableDebugLogging(os.Stdout)
+	}
+
+	var targets []iscsi.TargetInfo
+
+	for _, tgtp := range tgtps {
+		parts := strings.Split(tgtp, ":")
+		targets = append(targets, iscsi.TargetInfo{
+			// Specify the target iqn we're dealing with
+			Iqn: *iqn,
+			Portal: parts[0],
+			Port: parts[1],
+		})
 	}
 
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
@@ -32,10 +44,8 @@ func main() {
 	c := iscsi.Connector{
 		// Our example uses chap
 		AuthType: "chap",
-		// Specify the target iqn we're dealing with
-		TargetIqn: *iqn,
-		// List of portals must be >= 1 (>1 signals multipath/mpio)
-		TargetPortals: tgtp,
+		// List of targets must be >= 1 (>1 signals multipath/mpio)
+		Targets: targets,
 		// CHAP can be setup up for discovery as well as sessions, our example
 		// device only uses CHAP security for sessions, for those that use Discovery
 		// as well, we'd add a DiscoverySecrets entry the same way
@@ -71,5 +81,5 @@ func main() {
 
 	// Disconnect is easy as well, we don't need the full Connector any more, just the Target IQN and the Portals
 	/// this should disconnect the volume as well as clear out the iscsi DB entries associated with it
-	iscsi.Disconnect(c.TargetIqn, c.TargetPortals)
+	iscsi.Disconnect(*iqn, tgtps)
 }
