@@ -36,6 +36,7 @@ func (e *CmdError) Error() string {
 
 func iscsiCmd(args ...string) (string, error) {
 	cmd := execCommand("iscsiadm", args...)
+	debug.Printf("Run iscsiadm command: %s", strings.Join(append([]string{"iscsiadm"}, args...), " "))
 	var stdout bytes.Buffer
 	var iscsiadmError error
 	cmd.Stdout = &stdout
@@ -91,7 +92,7 @@ func ShowInterface(iface string) (string, error) {
 func CreateDBEntry(tgtIQN, portal, iFace string, discoverySecrets, sessionSecrets Secrets) error {
 	debug.Println("Begin CreateDBEntry...")
 	baseArgs := []string{"-m", "node", "-T", tgtIQN, "-p", portal}
-	_, err := iscsiCmd(append(baseArgs, []string{"-I", iFace, "-o", "new"}...)...)
+	_, err := iscsiCmd(append(baseArgs, "-I", iFace, "-o", "new")...)
 	if err != nil {
 		return err
 	}

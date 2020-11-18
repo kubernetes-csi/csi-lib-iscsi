@@ -2,15 +2,35 @@ package iscsi
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+	"encoding/json"
 )
 
 var sysBlockPath = "/sys/block"
+var sysScsiPath = "/sys/class/scsi_device"
 var devPath = "/dev"
+
+type multipathDeviceMap struct {
+	Map multipathMap `json:"map"`
+}
+
+type multipathMap struct {
+	Name string `json:"name"`
+	Uuid string `json:"uuid"`
+	Sysfs string `json:"sysfs"`
+	PathGroups []pathGroup `json:"path_groups"`
+}
+
+type pathGroup struct {
+	Paths []path `json:"paths"`
+}
+
+type path struct {
+	Device string `json:"dev"`
+}
 
 func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
 	debug.Printf("Executing command '%v' with args: '%v'.\n", command, args)
@@ -43,26 +63,49 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 	return out, err
 }
 
-// GetSysDevicesFromMultipathDevice gets all slaves for multipath device dm-x
-// in /sys/block/dm-x/slaves/
-func GetSysDevicesFromMultipathDevice(device string) ([]string, error) {
-	debug.Printf("Getting all slaves for multipath device %s.\n", device)
-	deviceSlavePath := filepath.Join(sysBlockPath, device, "slaves")
-	slaves, err := ioutil.ReadDir(deviceSlavePath)
+func getMultipathMap(device string) (*multipathDeviceMap, error) {
+	debug.Printf("Getting multipath map for device %s.\n", device[1:])
+
+	cmd := exec.Command("multipathd", "show", "map", device[1:], "json")
+	out, err := cmd.Output()
+	// debug.Printf(string(out))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		debug.Printf("An error occured while looking for multipath device map: %v\n", err)
+		return nil, err
+	}
+
+	var deviceMap multipathDeviceMap;
+	json.Unmarshal(out, &deviceMap)
+	return &deviceMap, nil
+}
+
+func (deviceMap *multipathDeviceMap) GetSlaves() []string {
+	var slaves []string
+
+	for _, pathGroup := range deviceMap.Map.PathGroups {
+		for _, path := range pathGroup.Paths {
+			slaves = append(slaves, path.Device)
 		}
+	}
+
+	return slaves
+}
+
+// GetScsiDevicesFromMultipathDevice gets all ScsiDevice for multipath device dm-x
+func GetScsiDevicesFromMultipathDevice(device string) ([]string, error) {
+	debug.Printf("Getting all slaves for multipath device %s.\n", device)
+
+	deviceMap, err := getMultipathMap(device)
+
+	if err != nil {
 		debug.Printf("An error occured while looking for slaves: %v\n", err)
 		return nil, err
 	}
 
-	var s []string
-	for _, slave := range slaves {
-		s = append(s, slave.Name())
-	}
-	debug.Printf("Found slaves: %v.\n", s)
-	return s, nil
+	slaves := deviceMap.GetSlaves()
+
+	debug.Printf("Found slaves: %v.\n", slaves)
+	return slaves, nil
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x

@@ -272,7 +272,6 @@ func Test_sessionExists(t *testing.T) {
 }
 
 func Test_DisconnectNormalVolume(t *testing.T) {
-
 	tmpDir, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Errorf("can not create temp directory: %v", err)
