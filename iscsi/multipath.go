@@ -3,8 +3,10 @@ package iscsi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -50,7 +52,10 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 	}
 
 	if err != nil {
-		debug.Printf("Non-zero exit code: %s\n", err)
+		if ee, ok := err.(*exec.ExitError); ok {
+			debug.Printf("Non-zero exit code: %s\n", err)
+			err = fmt.Errorf("%s", ee.Stderr)
+		}
 	}
 
 	debug.Println("Finished executing command.")
@@ -61,10 +66,10 @@ func getMultipathMap(device string) (*multipathDeviceMap, error) {
 	debug.Printf("Getting multipath map for device %s.\n", device)
 
 	cmd := exec.Command("multipathd", "show", "map", device[1:], "json")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	// debug.Printf(string(out))
 	if err != nil {
-		debug.Printf("An error occured while looking for multipath device map: %v\n", err)
+		debug.Printf("An error occured while looking for multipath device map: %s\n", out)
 		return nil, err
 	}
 
@@ -100,6 +105,9 @@ func FlushMultipathDevice(device *Device) error {
 		if _, e := os.Stat(devicePath); os.IsNotExist(e) {
 			debug.Printf("Multipath device %v has been removed.\n", devicePath)
 		} else {
+			if strings.Contains(err.Error(), "map in use") {
+				err = fmt.Errorf("device is probably still in use somewhere else: %v", err)
+			}
 			debug.Printf("Command 'multipath -f %v' did not succeed to delete the device: %v\n", devicePath, err)
 			return err
 		}
