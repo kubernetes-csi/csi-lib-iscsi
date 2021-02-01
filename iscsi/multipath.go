@@ -116,3 +116,14 @@ func FlushMultipathDevice(device *Device) error {
 	debug.Printf("Finshed flushing multipath device %v.\n", devicePath)
 	return nil
 }
+
+// ResizeMultipathDevice resize a multipath device based on its underlying devices
+func ResizeMultipathDevice(device *Device) error {
+	debug.Printf("Resizing multipath device %s\n", device.GetPath())
+
+	if output, err := exec.Command("multipathd", "resize", "map", device.Name).CombinedOutput(); err != nil {
+		return fmt.Errorf("could not resize multipath device: %s (%v)", output, err)
+	}
+
+	return nil
+}
