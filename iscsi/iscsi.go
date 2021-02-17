@@ -20,13 +20,14 @@ import (
 const defaultPort = "3260"
 
 var (
-	debug           *log.Logger
-	execCommand     = exec.Command
-	execWithTimeout = ExecWithTimeout
+	debug              *log.Logger
+	execCommand        = exec.Command
+	execCommandContext = exec.CommandContext
+	execWithTimeout    = ExecWithTimeout
+	osStat             = os.Stat
+	filepathGlob       = filepath.Glob
+	osOpenFile         = os.OpenFile
 )
-
-type statFunc func(string) (os.FileInfo, error)
-type globFunc func(string) ([]string, error)
 
 // iscsiSession contains information avout an iSCSI session
 type iscsiSession struct {
@@ -161,10 +162,6 @@ func getCurrentSessions() ([]iscsiSession, error) {
 
 // waitForPathToExist wait for a file at a path to exists on disk
 func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string) error {
-	return waitForPathToExistImpl(devicePath, maxRetries, intervalSeconds, deviceTransport, os.Stat, filepath.Glob)
-}
-
-func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string, osStat statFunc, filepathGlob globFunc) error {
 	if devicePath == nil {
 		return fmt.Errorf("unable to check unspecified devicePath")
 	}
@@ -175,7 +172,7 @@ func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds uint
 			time.Sleep(time.Second * time.Duration(intervalSeconds))
 		}
 
-		if err := pathExistsImpl(devicePath, deviceTransport, osStat, filepathGlob); err == nil {
+		if err := pathExists(devicePath, deviceTransport); err == nil {
 			return nil
 		} else if !os.IsNotExist(err) {
 			return err
@@ -187,10 +184,6 @@ func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds uint
 
 // pathExists checks if a file at a path exists on disk
 func pathExists(devicePath *string, deviceTransport string) error {
-	return pathExistsImpl(devicePath, deviceTransport, os.Stat, filepath.Glob)
-}
-
-func pathExistsImpl(devicePath *string, deviceTransport string, osStat statFunc, filepathGlob globFunc) error {
 	if deviceTransport == "tcp" {
 		_, err := osStat(*devicePath)
 		if err != nil {
@@ -423,11 +416,7 @@ func (c *Connector) DisconnectVolume() error {
 	} else {
 		devicePath := c.MountTargetDevice.GetPath()
 		debug.Printf("Removing normal device in path %s.\n", devicePath)
-		device, err := GetISCSIDevice(devicePath)
-		if err != nil {
-			return err
-		}
-		if err = RemoveSCSIDevices(*device); err != nil {
+		if err := RemoveSCSIDevices(*c.MountTargetDevice); err != nil {
 			return err
 		}
 	}
@@ -458,18 +447,6 @@ func (c *Connector) getMountTargetDevice() (*Device, error) {
 // IsMultipathEnabled check if multipath is enabled on devices handled by this connector
 func (c *Connector) IsMultipathEnabled() bool {
 	return len(c.Devices) > 1
-}
-
-// GetISCSIDevice get an SCSI device from a device name
-func GetISCSIDevice(deviceName string) (*Device, error) {
-	iscsiDevices, err := GetISCSIDevices([]string{deviceName})
-	if err != nil {
-		return nil, err
-	}
-	if len(iscsiDevices) == 0 {
-		return nil, fmt.Errorf("device %q not found", deviceName)
-	}
-	return &iscsiDevices[0], nil
 }
 
 // GetSCSIDevices get SCSI devices from device paths
@@ -512,7 +489,7 @@ func GetISCSIDevices(devicePaths []string) (devices []Device, err error) {
 
 // lsblk execute the lsblk commands
 func lsblk(flags string, devicePaths []string) ([]byte, error) {
-	out, err := exec.Command("lsblk", append([]string{flags}, devicePaths...)...).CombinedOutput()
+	out, err := execCommand("lsblk", append([]string{flags}, devicePaths...)...).CombinedOutput()
 	debug.Printf("lsblk %s %s", flags, strings.Join(devicePaths, " "))
 	if err != nil {
 		return nil, fmt.Errorf("lsblk: %s", string(out))
@@ -526,7 +503,7 @@ func writeInSCSIDeviceFile(hctl string, file string, content string) error {
 	filename := filepath.Join("/sys/class/scsi_device", hctl, "device", file)
 	debug.Printf("Write %q in %q.\n", content, filename)
 
-	f, err := os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, 0200)
+	f, err := osOpenFile(filename, os.O_TRUNC|os.O_WRONLY, 0200)
 	if err != nil {
 		debug.Printf("Error while opening file %v: %v\n", filename, err)
 		return err
@@ -549,7 +526,7 @@ func RemoveSCSIDevices(devices ...Device) error {
 	for _, device := range devices {
 		debug.Printf("Flush SCSI device %v.\n", device.Name)
 		if err := device.Exists(); err == nil {
-			out, err := exec.Command("blockdev", "--flushbufs", device.GetPath()).CombinedOutput()
+			out, err := execCommand("blockdev", "--flushbufs", device.GetPath()).CombinedOutput()
 			if err != nil {
 				debug.Printf("Command 'blockdev --flushbufs %s' did not succeed to flush the device: %v\n", device.GetPath(), err)
 				return errors.New(string(out))
@@ -617,7 +594,7 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 
 // Exists check if the device exists at its path and returns an error otherwise
 func (d *Device) Exists() error {
-	_, err := os.Stat(d.GetPath())
+	_, err := osStat(d.GetPath())
 	return err
 }
 

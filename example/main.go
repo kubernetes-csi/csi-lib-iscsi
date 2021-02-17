@@ -11,12 +11,12 @@ import (
 )
 
 var (
-	portals   = flag.String("portals", "192.168.1.112:3260", "Comma delimited.  Eg: 1.1.1.1,2.2.2.2")
-	iqn       = flag.String("iqn", "iqn.2010-10.org.openstack:volume-95739000-1557-44f8-9f40-e9d29fe6ec47", "")
-	username  = flag.String("username", "3aX7EEf3CEgvESQG75qh", "")
-	password  = flag.String("password", "eJBDC7Bt7WE3XFDq", "")
-	lun       = flag.Int("lun", 1, "")
-	debug     = flag.Bool("debug", false, "enable logging")
+	portals  = flag.String("portals", "192.168.1.112:3260", "Comma delimited.  Eg: 1.1.1.1,2.2.2.2")
+	iqn      = flag.String("iqn", "iqn.2010-10.org.openstack:volume-95739000-1557-44f8-9f40-e9d29fe6ec47", "")
+	username = flag.String("username", "3aX7EEf3CEgvESQG75qh", "")
+	password = flag.String("password", "eJBDC7Bt7WE3XFDq", "")
+	lun      = flag.Int("lun", 1, "")
+	debug    = flag.Bool("debug", false, "enable logging")
 )
 
 func main() {
@@ -32,9 +32,9 @@ func main() {
 		parts := strings.Split(tgtp, ":")
 		targets = append(targets, iscsi.TargetInfo{
 			// Specify the target iqn we're dealing with
-			Iqn: *iqn,
+			Iqn:    *iqn,
 			Portal: parts[0],
-			Port: parts[1],
+			Port:   parts[1],
 		})
 	}
 
@@ -62,16 +62,21 @@ func main() {
 
 	// Now we can just issue a connection request using our Connector
 	// A succesful connection will include the device path to access our iscsi volume
-	path, err := iscsi.Connect(c)
+	path, err := c.Connect()
 	if err != nil {
-		log.Printf("Error returned from iscsi.Connect: %s", err.Error())
+		log.Printf("Error returned from c.Connect: %s", err.Error())
 		os.Exit(1)
 	}
 
 	log.Printf("Connected device at path: %s\n", path)
 	time.Sleep(3 * time.Second)
 
-	// Disconnect is easy as well, we don't need the full Connector any more, just the Target IQN and the Portals
-	/// this should disconnect the volume as well as clear out the iscsi DB entries associated with it
-	iscsi.Disconnect(*iqn, tgtps)
+	// This will disconnect the volume
+	if err := c.DisconnectVolume(); err != nil {
+		log.Printf("Error returned from c.DisconnectVolume: %s", err.Error())
+		os.Exit(1)
+	}
+
+	// This will disconnect the session as well as clear out the iscsi DB entries associated with it
+	c.Disconnect()
 }

@@ -89,10 +89,7 @@ var testExecWithTimeoutError error
 var mockedExitStatus = 0
 var mockedStdout string
 
-var sysBlockPath = "/sys/block"
-var normalDevice = "sda"
-var multipathDevice = "dm-1"
-var slaves = []string{"sdb", "sdc"}
+const testRootFS = "/tmp/iscsi-tests"
 
 type testCmdRunner struct{}
 
@@ -129,31 +126,27 @@ func (tr testCmdRunner) execCmd(cmd string, args ...string) (string, error) {
 
 }
 
-func preparePaths(sysBlockPath string) error {
-	for _, d := range append(slaves, normalDevice) {
-		devicePath := filepath.Join(sysBlockPath, d, "device")
-		err := os.MkdirAll(devicePath, os.ModePerm)
-		if err != nil {
+func getDevicePath(device *Device) string {
+	sysDevicePath := "/tmp/iscsi-tests/sys/class/scsi_device/"
+	return filepath.Join(sysDevicePath, device.Hctl, "device")
+}
+
+func preparePaths(devices []Device) error {
+	for _, d := range devices {
+		devicePath := getDevicePath(&d)
+
+		if err := os.MkdirAll(devicePath, os.ModePerm); err != nil {
 			return err
 		}
-		err = ioutil.WriteFile(filepath.Join(devicePath, "delete"), []byte(""), 0600)
-		if err != nil {
-			return err
-		}
-	}
-	for _, s := range slaves {
-		err := os.MkdirAll(filepath.Join(sysBlockPath, multipathDevice, "slaves", s), os.ModePerm)
-		if err != nil {
-			return err
+
+		for _, filename := range []string{"delete", "state"} {
+			if err := ioutil.WriteFile(filepath.Join(devicePath, filename), []byte(""), 0600); err != nil {
+				return err
+			}
 		}
 	}
 
-	err := os.MkdirAll(filepath.Join(sysBlockPath, "dev", multipathDevice), os.ModePerm)
-	if err != nil {
-		return err
-	}
 	return nil
-
 }
 
 func Test_parseSessions(t *testing.T) {
@@ -273,48 +266,41 @@ func Test_sessionExists(t *testing.T) {
 }
 
 func Test_DisconnectNormalVolume(t *testing.T) {
-	tmpDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Errorf("can not create temp directory: %v", err)
-		return
+	deleteDeviceFile := "/tmp/deleteDevice"
+	osOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		fmt.Println(deleteDeviceFile)
+		return os.OpenFile(deleteDeviceFile, flag, perm)
 	}
-	sysBlockPath = tmpDir
-	defer os.RemoveAll(tmpDir)
-
-	err = preparePaths(tmpDir)
-	if err != nil {
-		t.Errorf("can not create temp directories and files: %v", err)
-		return
-	}
-
-	execWithTimeout = fakeExecWithTimeout
-	devicePath := normalDevice
 
 	tests := []struct {
-		name         string
-		removeDevice bool
-		wantErr      bool
+		name           string
+		withDeviceFile bool
+		wantErr        bool
 	}{
-		{"DisconnectNormalVolume", false, false},
-		{"DisconnectNonexistentNormalVolume", true, false},
+		{"DisconnectNormalVolume", true, false},
+		{"DisconnectNonexistentNormalVolume", false, false},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.removeDevice {
-				os.RemoveAll(filepath.Join(sysBlockPath, devicePath))
+			if tt.withDeviceFile {
+				os.Create(deleteDeviceFile)
+			} else {
+				os.RemoveAll(testRootFS)
 			}
-			c := Connector{Multipath: false, DevicePath: devicePath}
-			err := DisconnectVolume(c)
+
+			device := Device{Name: "test"}
+			c := Connector{Devices: []Device{device}, MountTargetDevice: &device}
+			err := c.DisconnectVolume()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
-			if !tt.removeDevice {
-				deleteFile := filepath.Join(sysBlockPath, devicePath, "device", "delete")
-				out, err := ioutil.ReadFile(deleteFile)
+			if tt.withDeviceFile {
+				out, err := ioutil.ReadFile(deleteDeviceFile)
 				if err != nil {
-					t.Errorf("can not read file %v: %v", deleteFile, err)
+					t.Errorf("can not read file %v: %v", deleteDeviceFile, err)
 					return
 				}
 				if string(out) != "1" {
@@ -327,51 +313,54 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 }
 
 func Test_DisconnectMultipathVolume(t *testing.T) {
-
 	execWithTimeout = fakeExecWithTimeout
-	devicePath := multipathDevice
+	mockedExitStatus = 0
+	mockedStdout = ""
+	execCommand = fakeExecCommand
+	osStat = func(name string) (os.FileInfo, error) {
+		return nil, nil
+	}
 
 	tests := []struct {
-		name         string
-		timeout      bool
-		removeDevice bool
-		wantErr      bool
-		cmdError     error
+		name           string
+		timeout        bool
+		withDeviceFile bool
+		wantErr        bool
+		cmdError       error
 	}{
-		{"DisconnectMultipathVolume", false, false, false, nil},
-		{"DisconnectMultipathVolumeFlushFailed", false, false, true, fmt.Errorf("error")},
-		{"DisconnectMultipathVolumeFlushTimeout", true, false, true, nil},
-		{"DisconnectNonexistentMultipathVolume", false, true, false, fmt.Errorf("error")},
+		{"DisconnectMultipathVolume", false, true, false, nil},
+		{"DisconnectMultipathVolumeFlushTimeout", true, true, true, nil},
+		{"DisconnectNonexistentMultipathVolume", false, false, false, nil},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-
-			tmpDir, err := ioutil.TempDir("", "")
-			if err != nil {
-				t.Errorf("can not create temp directory: %v", err)
-				return
-			}
-			sysBlockPath = tmpDir
-			devPath = filepath.Join(tmpDir, "dev")
-			defer os.RemoveAll(tmpDir)
-
-			err = preparePaths(tmpDir)
-			if err != nil {
-				t.Errorf("can not create temp directories and files: %v", err)
-				return
-			}
 			testExecWithTimeoutError = tt.cmdError
 			testCmdTimeout = tt.timeout
-			if tt.removeDevice {
-				os.RemoveAll(filepath.Join(sysBlockPath, devicePath))
-				os.RemoveAll(devPath)
+			c := Connector{
+				Devices:           []Device{{Hctl: "hctl1"}, {Hctl: "hctl2"}},
+				MountTargetDevice: &Device{Type: "mpath"},
 			}
-			c := Connector{Multipath: true, DevicePath: devicePath}
-			err = DisconnectVolume(c)
+
+			osOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+				return os.OpenFile(testRootFS+name, flag, perm)
+			}
+
+			if tt.withDeviceFile {
+				if err := preparePaths(c.Devices); err != nil {
+					t.Errorf("could not prepare paths: %v", err)
+					return
+				}
+			} else {
+				os.Remove(testRootFS)
+			}
+
+			err := c.DisconnectVolume()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+
 			if tt.timeout {
 				if err != context.DeadlineExceeded {
 					t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, context.DeadlineExceeded)
@@ -379,21 +368,23 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 				}
 			}
 
-			if !tt.removeDevice && !tt.wantErr {
-				for _, s := range slaves {
-					deleteFile := filepath.Join(sysBlockPath, s, "device", "delete")
-					out, err := ioutil.ReadFile(deleteFile)
-					if err != nil {
-						t.Errorf("can not read file %v: %v", deleteFile, err)
-						return
-					}
-					if string(out) != "1" {
-						t.Errorf("file content mismatch, got = %s, want = 1", string(out))
-						return
-					}
+			if tt.withDeviceFile && !tt.wantErr {
+				for _, device := range c.Devices {
+					checkFileContents(t, getDevicePath(&device)+"/delete", "1")
+					checkFileContents(t, getDevicePath(&device)+"/state", "offline\n")
 				}
 
 			}
 		})
+	}
+}
+
+func checkFileContents(t *testing.T, path string, contents string) {
+	if out, err := ioutil.ReadFile(path); err != nil {
+		t.Errorf("could not read file: %v", err)
+		return
+	} else if string(out) != contents {
+		t.Errorf("file content mismatch, got = %q, want = %q", string(out), contents)
+		return
 	}
 }

@@ -38,7 +38,7 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 	defer cancel()
 
 	// Create command with context
-	cmd := exec.CommandContext(ctx, command, args...)
+	cmd := execCommandContext(ctx, command, args...)
 
 	// This time we can simply use Output() to get the result.
 	out, err := cmd.Output()
@@ -65,7 +65,7 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 func getMultipathMap(device string) (*multipathDeviceMap, error) {
 	debug.Printf("Getting multipath map for device %s.\n", device)
 
-	cmd := exec.Command("multipathd", "show", "map", device[1:], "json")
+	cmd := execCommand("multipathd", "show", "map", device[1:], "json")
 	out, err := cmd.CombinedOutput()
 	// debug.Printf(string(out))
 	if err != nil {
@@ -102,7 +102,7 @@ func FlushMultipathDevice(device *Device) error {
 	_, err := execWithTimeout("multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
-		if _, e := os.Stat(devicePath); os.IsNotExist(e) {
+		if _, e := osStat(devicePath); os.IsNotExist(e) {
 			debug.Printf("Multipath device %v has been removed.\n", devicePath)
 		} else {
 			if strings.Contains(err.Error(), "map in use") {
@@ -121,7 +121,7 @@ func FlushMultipathDevice(device *Device) error {
 func ResizeMultipathDevice(device *Device) error {
 	debug.Printf("Resizing multipath device %s\n", device.GetPath())
 
-	if output, err := exec.Command("multipathd", "resize", "map", device.Name).CombinedOutput(); err != nil {
+	if output, err := execCommand("multipathd", "resize", "map", device.Name).CombinedOutput(); err != nil {
 		return fmt.Errorf("could not resize multipath device: %s (%v)", output, err)
 	}
 
