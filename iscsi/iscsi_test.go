@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/prashantv/gostub"
 )
 
-var nodeDB = `
+const nodeDB = `
 # BEGIN RECORD 6.2.0.874
 node.name = iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced
 node.tpgt = -1
@@ -80,35 +82,30 @@ node.conn[0].iscsi.OFMarker = No
 # END RECORD
 `
 
-var emptyTransportName = "iface.transport_name = \n"
-var emptyDbRecord = "\n\n\n"
-var testCmdOutput = ""
-var testCmdTimeout = false
-var testCmdError error
-var testExecWithTimeoutError error
-var mockedExitStatus = 0
-var mockedStdout string
-
+const emptyTransportName = "iface.transport_name = \n"
+const emptyDbRecord = "\n\n\n"
 const testRootFS = "/tmp/iscsi-tests"
 
-type testCmdRunner struct{}
-
-func fakeExecCommand(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestExecCommandHelper", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
-	es := strconv.Itoa(mockedExitStatus)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1",
-		"STDOUT=" + mockedStdout,
-		"EXIT_STATUS=" + es}
-	return cmd
+func makeFakeExecCommand(exitStatus int, stdout string) func(string, ...string) *exec.Cmd {
+	return func(command string, args ...string) *exec.Cmd {
+		cs := []string{"-test.run=TestExecCommandHelper", "--", command}
+		cs = append(cs, args...)
+		cmd := exec.Command(os.Args[0], cs...)
+		es := strconv.Itoa(exitStatus)
+		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1",
+			"STDOUT=" + stdout,
+			"EXIT_STATUS=" + es}
+		return cmd
+	}
 }
 
-func fakeExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
-	if testCmdTimeout {
-		return nil, context.DeadlineExceeded
+func makeFakeExecWithTimeout(testCmdTimeout bool, testExecWithTimeoutError error) func(string, []string, time.Duration) ([]byte, error) {
+	return func(command string, args []string, timeout time.Duration) ([]byte, error) {
+		if testCmdTimeout {
+			return nil, context.DeadlineExceeded
+		}
+		return []byte(""), testExecWithTimeoutError
 	}
-	return []byte(testCmdOutput), testExecWithTimeoutError
 }
 
 func TestExecCommandHelper(t *testing.T) {
@@ -119,11 +116,6 @@ func TestExecCommandHelper(t *testing.T) {
 	fmt.Fprintf(os.Stdout, os.Getenv("STDOUT"))
 	i, _ := strconv.Atoi(os.Getenv("EXIT_STATUS"))
 	os.Exit(i)
-}
-
-func (tr testCmdRunner) execCmd(cmd string, args ...string) (string, error) {
-	return testCmdOutput, testCmdError
-
 }
 
 func getDevicePath(device *Device) string {
@@ -147,6 +139,16 @@ func preparePaths(devices []Device) error {
 	}
 
 	return nil
+}
+
+func checkFileContents(t *testing.T, path string, contents string) {
+	if out, err := ioutil.ReadFile(path); err != nil {
+		t.Errorf("could not read file: %v", err)
+		return
+	} else if string(out) != contents {
+		t.Errorf("file content mismatch, got = %q, want = %q", string(out), contents)
+		return
+	}
 }
 
 func Test_parseSessions(t *testing.T) {
@@ -226,9 +228,9 @@ func Test_extractTransportName(t *testing.T) {
 }
 
 func Test_sessionExists(t *testing.T) {
-	mockedExitStatus = 0
-	mockedStdout = "tcp: [4] 192.168.1.107:3260,1 iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced (non-flash)\n"
-	execCommand = fakeExecCommand
+	fakeOutput := "tcp: [4] 192.168.1.107:3260,1 iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced (non-flash)\n"
+	defer gostub.Stub(&execCommand, makeFakeExecCommand(0, fakeOutput)).Reset()
+
 	type args struct {
 		tgtPortal string
 		tgtIQN    string
@@ -267,10 +269,9 @@ func Test_sessionExists(t *testing.T) {
 
 func Test_DisconnectNormalVolume(t *testing.T) {
 	deleteDeviceFile := "/tmp/deleteDevice"
-	osOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
-		fmt.Println(deleteDeviceFile)
+	defer gostub.Stub(&osOpenFile, func(name string, flag int, perm os.FileMode) (*os.File, error) {
 		return os.OpenFile(deleteDeviceFile, flag, perm)
-	}
+	}).Reset()
 
 	tests := []struct {
 		name           string
@@ -313,13 +314,10 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 }
 
 func Test_DisconnectMultipathVolume(t *testing.T) {
-	execWithTimeout = fakeExecWithTimeout
-	mockedExitStatus = 0
-	mockedStdout = ""
-	execCommand = fakeExecCommand
-	osStat = func(name string) (os.FileInfo, error) {
+	defer gostub.Stub(&execCommand, makeFakeExecCommand(0, "")).Reset()
+	defer gostub.Stub(&osStat, func(name string) (os.FileInfo, error) {
 		return nil, nil
-	}
+	}).Reset()
 
 	tests := []struct {
 		name           string
@@ -335,16 +333,15 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testExecWithTimeoutError = tt.cmdError
-			testCmdTimeout = tt.timeout
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(tt.timeout, tt.cmdError)).Reset()
 			c := Connector{
 				Devices:           []Device{{Hctl: "hctl1"}, {Hctl: "hctl2"}},
 				MountTargetDevice: &Device{Type: "mpath"},
 			}
 
-			osOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+			defer gostub.Stub(&osOpenFile, func(name string, flag int, perm os.FileMode) (*os.File, error) {
 				return os.OpenFile(testRootFS+name, flag, perm)
-			}
+			}).Reset()
 
 			if tt.withDeviceFile {
 				if err := preparePaths(c.Devices); err != nil {
@@ -373,18 +370,7 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 					checkFileContents(t, getDevicePath(&device)+"/delete", "1")
 					checkFileContents(t, getDevicePath(&device)+"/state", "offline\n")
 				}
-
 			}
 		})
-	}
-}
-
-func checkFileContents(t *testing.T, path string, contents string) {
-	if out, err := ioutil.ReadFile(path); err != nil {
-		t.Errorf("could not read file: %v", err)
-		return
-	} else if string(out) != contents {
-		t.Errorf("file content mismatch, got = %q, want = %q", string(out), contents)
-		return
 	}
 }

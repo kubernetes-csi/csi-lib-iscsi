@@ -1,9 +1,12 @@
 package iscsi
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/prashantv/gostub"
+)
 
 func TestDiscovery(t *testing.T) {
-	execCommand = fakeExecCommand
 	tests := map[string]struct {
 		tgtPortal        string
 		iface            string
@@ -63,8 +66,7 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			mockedExitStatus = tt.mockedExitStatus
-			mockedStdout = tt.mockedStdout
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
 			err := Discoverydb(tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Discoverydb() error = %v, wantErr %v", err, tt.wantErr)
@@ -75,7 +77,6 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 }
 
 func TestCreateDBEntry(t *testing.T) {
-	execCommand = fakeExecCommand
 	tests := map[string]struct {
 		tgtPortal        string
 		tgtIQN           string
@@ -115,8 +116,7 @@ func TestCreateDBEntry(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			mockedExitStatus = tt.mockedExitStatus
-			mockedStdout = tt.mockedStdout
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
 			err := CreateDBEntry(tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateDBEntry() error = %v, wantErr %v", err, tt.wantErr)
