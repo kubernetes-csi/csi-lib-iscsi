@@ -2,24 +2,12 @@ package iscsi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
-
-type multipathDeviceMap struct {
-	Map multipathMap `json:"map"`
-}
-
-type multipathMap struct {
-	Name       string      `json:"name"`
-	UUID       string      `json:"uuid"`
-	Sysfs      string      `json:"sysfs"`
-	PathGroups []pathGroup `json:"path_groups"`
-}
 
 type pathGroup struct {
 	Paths []path `json:"paths"`
@@ -42,6 +30,7 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 
 	// This time we can simply use Output() to get the result.
 	out, err := cmd.Output()
+	debug.Println(err)
 
 	// We want to check the context error to see if the timeout was executed.
 	// The error returned by cmd.Output() will be OS specific based on what
@@ -60,37 +49,6 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 
 	debug.Println("Finished executing command.")
 	return out, err
-}
-
-func getMultipathMap(device string) (*multipathDeviceMap, error) {
-	debug.Printf("Getting multipath map for device %s.\n", device)
-
-	cmd := execCommand("multipathd", "show", "map", device[1:], "json")
-	out, err := cmd.CombinedOutput()
-	// debug.Printf(string(out))
-	if err != nil {
-		debug.Printf("An error occured while looking for multipath device map: %s\n", out)
-		return nil, err
-	}
-
-	var deviceMap multipathDeviceMap
-	err = json.Unmarshal(out, &deviceMap)
-	if err != nil {
-		return nil, err
-	}
-	return &deviceMap, nil
-}
-
-func (deviceMap *multipathDeviceMap) GetSlaves() []string {
-	var slaves []string
-
-	for _, pathGroup := range deviceMap.Map.PathGroups {
-		for _, path := range pathGroup.Paths {
-			slaves = append(slaves, path.Device)
-		}
-	}
-
-	return slaves
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x

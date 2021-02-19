@@ -27,6 +27,7 @@ var (
 	osStat             = os.Stat
 	filepathGlob       = filepath.Glob
 	osOpenFile         = os.OpenFile
+	sleep              = time.Sleep
 )
 
 // iscsiSession contains information avout an iSCSI session
@@ -162,14 +163,14 @@ func getCurrentSessions() ([]iscsiSession, error) {
 
 // waitForPathToExist wait for a file at a path to exists on disk
 func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string) error {
-	if devicePath == nil {
+	if devicePath == nil || *devicePath == "" {
 		return fmt.Errorf("unable to check unspecified devicePath")
 	}
 
 	for i := uint(0); i <= maxRetries; i++ {
 		if i != 0 {
 			debug.Printf("Device path %q doesn't exists yet, retrying in %d seconds (%d/%d)", *devicePath, intervalSeconds, i, maxRetries)
-			time.Sleep(time.Second * time.Duration(intervalSeconds))
+			sleep(time.Second * time.Duration(intervalSeconds))
 		}
 
 		if err := pathExists(devicePath, deviceTransport); err == nil {
@@ -195,7 +196,11 @@ func pathExists(devicePath *string, deviceTransport string) error {
 			return err
 		}
 	} else {
-		fpath, _ := filepathGlob(*devicePath)
+		fpath, err := filepathGlob(*devicePath)
+
+		if err != nil {
+			return err
+		}
 		if fpath == nil {
 			return os.ErrNotExist
 		}
@@ -210,19 +215,14 @@ func pathExists(devicePath *string, deviceTransport string) error {
 
 // getMultipathDevice returns a multipath device for the configured targets if it exists
 func getMultipathDevice(devices []Device) (*Device, error) {
-	var deviceInfo deviceInfo
 	var multipathDevice *Device
 	var devicePaths []string
 
 	for _, device := range devices {
 		devicePaths = append(devicePaths, device.GetPath())
 	}
-	out, err := lsblk("-J", devicePaths)
+	deviceInfo, err := lsblk("", devicePaths)
 	if err != nil {
-		return nil, err
-	}
-
-	if err = json.Unmarshal(out, &deviceInfo); err != nil {
 		return nil, err
 	}
 
@@ -454,15 +454,9 @@ func (c *Connector) IsMultipathEnabled() bool {
 func GetSCSIDevices(devicePaths []string) ([]Device, error) {
 	debug.Printf("Getting info about SCSI devices %s.\n", devicePaths)
 
-	out, err := lsblk("-JS", devicePaths)
+	deviceInfo, err := lsblk("-S", devicePaths)
 	if err != nil {
 		debug.Printf("An error occured while looking info about SCSI devices: %v", err)
-		return nil, err
-	}
-
-	var deviceInfo deviceInfo
-	err = json.Unmarshal(out, &deviceInfo)
-	if err != nil {
 		return nil, err
 	}
 
@@ -488,7 +482,7 @@ func GetISCSIDevices(devicePaths []string) (devices []Device, err error) {
 }
 
 // lsblk execute the lsblk commands
-func lsblk(flags string, devicePaths []string) ([]byte, error) {
+func lsblkRaw(flags string, devicePaths []string) ([]byte, error) {
 	out, err := execCommand("lsblk", append([]string{flags}, devicePaths...)...).CombinedOutput()
 	debug.Printf("lsblk %s %s", flags, strings.Join(devicePaths, " "))
 	if err != nil {
@@ -496,6 +490,21 @@ func lsblk(flags string, devicePaths []string) ([]byte, error) {
 	}
 
 	return out, nil
+}
+
+func lsblk(flags string, devicePaths []string) (*deviceInfo, error) {
+	var deviceInfo deviceInfo
+
+	out, err := lsblkRaw("-J "+flags, devicePaths)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = json.Unmarshal(out, &deviceInfo); err != nil {
+		return nil, err
+	}
+
+	return &deviceInfo, nil
 }
 
 // writeInSCSIDeviceFile write into special devices files to change devices state
@@ -614,15 +623,15 @@ func (d *Device) WriteDeviceFile(name string, content string) error {
 
 // Shutdown turn off an SCSI device by writing offline\n in /sys/class/scsi_device/h:c:t:l/device/state
 func (d *Device) Shutdown() error {
-	return writeInSCSIDeviceFile(d.Hctl, "state", "offline\n")
+	return d.WriteDeviceFile("state", "offline\n")
 }
 
 // Delete detach an SCSI device by writing 1 in /sys/class/scsi_device/h:c:t:l/device/delete
 func (d *Device) Delete() error {
-	return writeInSCSIDeviceFile(d.Hctl, "delete", "1")
+	return d.WriteDeviceFile("delete", "1")
 }
 
 // Rescan rescan an SCSI device by writing 1 in /sys/class/scsi_device/h:c:t:l/device/rescan
 func (d *Device) Rescan() error {
-	return writeInSCSIDeviceFile(d.Hctl, "rescan", "1")
+	return d.WriteDeviceFile("rescan", "1")
 }

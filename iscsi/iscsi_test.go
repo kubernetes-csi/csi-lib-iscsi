@@ -2,6 +2,7 @@ package iscsi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -9,11 +10,22 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/prashantv/gostub"
+	"github.com/stretchr/testify/assert"
 )
+
+type testWriter struct {
+	data *[]byte
+}
+
+func (w testWriter) Write(data []byte) (n int, err error) {
+	*w.data = append(*w.data, data...)
+	return len(data), nil
+}
 
 const nodeDB = `
 # BEGIN RECORD 6.2.0.874
@@ -96,6 +108,12 @@ func makeFakeExecCommand(exitStatus int, stdout string) func(string, ...string) 
 			"STDOUT=" + stdout,
 			"EXIT_STATUS=" + es}
 		return cmd
+	}
+}
+
+func makeFakeExecCommandContext(exitStatus int, stdout string) func(context.Context, string, ...string) *exec.Cmd {
+	return func(ctx context.Context, command string, args ...string) *exec.Cmd {
+		return makeFakeExecCommand(exitStatus, stdout)(command, args...)
 	}
 }
 
@@ -373,4 +391,261 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_EnableDebugLogging(t *testing.T) {
+	assert := assert.New(t)
+	data := []byte{}
+	writer := testWriter{data: &data}
+	EnableDebugLogging(writer)
+
+	assert.Equal("", string(data))
+	assert.Len(strings.Split(string(data), "\n"), 1)
+
+	debug.Print("testing debug logs")
+	assert.Contains(string(data), "testing debug logs")
+	assert.Len(strings.Split(string(data), "\n"), 2)
+}
+
+func Test_waitForPathToExist(t *testing.T) {
+	tests := map[string]struct {
+		attempts     int
+		fileNotFound bool
+		withErr      bool
+		transport    string
+	}{
+		"Basic": {
+			attempts: 1,
+		},
+		"WithRetry": {
+			attempts: 2,
+		},
+		"WithRetryFail": {
+			attempts:     3,
+			fileNotFound: true,
+		},
+		"WithError": {
+			withErr: true,
+		},
+	}
+
+	for name, tt := range tests {
+		tt.transport = "tcp"
+		tests[name+"OverTCP"] = tt
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			attempts := 0
+			maxRetries := tt.attempts - 1
+			if tt.fileNotFound {
+				maxRetries--
+			}
+			if maxRetries < 0 {
+				maxRetries = 0
+			}
+			doAttempt := func(err error) error {
+				attempts++
+				if tt.withErr {
+					return err
+				}
+				if attempts < tt.attempts {
+					return os.ErrNotExist
+				}
+				return nil
+			}
+			defer gostub.Stub(&osStat, func(name string) (os.FileInfo, error) {
+				if err := doAttempt(os.ErrPermission); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			}).Reset()
+			defer gostub.Stub(&filepathGlob, func(name string) ([]string, error) {
+				if err := doAttempt(filepath.ErrBadPattern); err != nil {
+					return nil, err
+				}
+				return []string{"/somefilewithalongname"}, nil
+			}).Reset()
+			defer gostub.Stub(&sleep, func(_ time.Duration) {}).Reset()
+			path := "/somefile"
+			err := waitForPathToExist(&path, uint(maxRetries), 1, tt.transport)
+
+			if tt.withErr {
+				if tt.transport == "tcp" {
+					assert.Equal(os.ErrPermission, err)
+				} else {
+					assert.Equal(filepath.ErrBadPattern, err)
+				}
+				return
+			}
+			if tt.fileNotFound {
+				assert.Equal(os.ErrNotExist, err)
+				assert.Equal(maxRetries, attempts-1)
+			} else {
+				assert.Nil(err)
+				assert.Equal(tt.attempts, attempts)
+				if tt.transport == "tcp" {
+					assert.Equal("/somefile", path)
+				} else {
+					assert.Equal("/somefilewithalongname", path)
+				}
+			}
+		})
+	}
+
+	t.Run("PathEmptyOrNil", func(t *testing.T) {
+		assert := assert.New(t)
+		path := ""
+
+		err := waitForPathToExist(&path, 0, 0, "tcp")
+		assert.NotNil(err)
+
+		err = waitForPathToExist(&path, 0, 0, "")
+		assert.NotNil(err)
+
+		err = waitForPathToExist(nil, 0, 0, "tcp")
+		assert.NotNil(err)
+
+		err = waitForPathToExist(nil, 0, 0, "")
+		assert.NotNil(err)
+	})
+
+	t.Run("PathNotFound", func(t *testing.T) {
+		assert := assert.New(t)
+		defer gostub.Stub(&filepathGlob, func(name string) ([]string, error) {
+			return nil, nil
+		}).Reset()
+
+		path := "/test"
+		err := waitForPathToExist(&path, 0, 0, "")
+		assert.NotNil(err)
+		assert.Equal(os.ErrNotExist, err)
+	})
+}
+
+func Test_getMultipathDevice(t *testing.T) {
+	mpath1 := Device{Name: "3600c0ff0000000000000000000000000", Type: "mpath"}
+	mpath2 := Device{Name: "3600c0ff1111111111111111111111111", Type: "mpath"}
+	sda := Device{Name: "sda", Children: []Device{{Name: "sda1"}}}
+	sdb := Device{Name: "sdb", Children: []Device{mpath1}}
+	sdc := Device{Name: "sdc", Children: []Device{mpath1}}
+	sdd := Device{Name: "sdc", Children: []Device{mpath2}}
+	sde := Device{Name: "sdc", Children: []Device{mpath1, mpath2}}
+
+	tests := map[string]struct {
+		mockedDevices    deviceInfo
+		mockedStdout     string
+		mockedExitStatus int
+		multipathDevice  *Device
+		wantErr          bool
+	}{
+		"Basic": {
+			mockedDevices:   deviceInfo{BlockDevices: []Device{sdb, sdc}},
+			multipathDevice: &mpath1,
+		},
+		"NotABlockDevice": {
+			mockedStdout:     "lsblk: sdzz: not a block device",
+			mockedExitStatus: 32,
+		},
+		"NotSharingTheSameMultipathDevice": {
+			mockedDevices: deviceInfo{BlockDevices: []Device{sdb, sdd}},
+			wantErr:       true,
+		},
+		"MoreThanOneMultipathDevice": {
+			mockedDevices: deviceInfo{BlockDevices: []Device{sde}},
+			wantErr:       true,
+		},
+		"NotAMultipathDevice": {
+			mockedDevices: deviceInfo{BlockDevices: []Device{sda}},
+			wantErr:       true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			mockedStdout := tt.mockedStdout
+			if mockedStdout == "" {
+				out, err := json.Marshal(tt.mockedDevices)
+				assert.Nil(err, "could not setup test")
+				mockedStdout = string(out)
+			}
+
+			gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, string(mockedStdout)))
+			multipathDevice, err := getMultipathDevice(tt.mockedDevices.BlockDevices)
+
+			if tt.mockedExitStatus != 0 || tt.wantErr {
+				assert.Nil(multipathDevice)
+				assert.NotNil(err)
+			} else {
+				assert.Equal(tt.multipathDevice, multipathDevice)
+				assert.Nil(err)
+			}
+		})
+	}
+}
+
+func TestConnectorPersistance(t *testing.T) {
+	assert := assert.New(t)
+
+	secret := Secrets{
+		SecretsType: "fake secret type",
+		UserName:    "fake username",
+		Password:    "fake password",
+		UserNameIn:  "fake username in",
+		PasswordIn:  "fake password in",
+	}
+	childDevice := Device{
+		Name:      "child name",
+		Hctl:      "child hctl",
+		Type:      "child type",
+		Vendor:    "child vendor",
+		Model:     "child model",
+		Revision:  "child revision",
+		Transport: "child transport",
+	}
+	device := Device{
+		Name:      "device name",
+		Hctl:      "device hctl",
+		Children:  []Device{childDevice},
+		Type:      "device type",
+		Vendor:    "device vendor",
+		Model:     "device model",
+		Revision:  "device revision",
+		Transport: "device transport",
+	}
+	c := Connector{
+		VolumeName:        "fake volume name",
+		Targets:           []TargetInfo{},
+		Lun:               42,
+		AuthType:          "fake auth type",
+		DiscoverySecrets:  secret,
+		SessionSecrets:    secret,
+		Interface:         "fake interface",
+		MountTargetDevice: &device,
+		Devices:           []Device{device, childDevice},
+		RetryCount:        24,
+		CheckInterval:     13,
+		DoDiscovery:       true,
+		DoCHAPDiscovery:   true,
+	}
+
+	c.Persist("/tmp/connector.json")
+	c2, err := GetConnectorFromFile("/tmp/connector.json")
+	assert.Nil(err)
+	assert.Equal(c, *c2)
+
+	err = c.Persist("/tmp")
+	assert.NotNil(err)
+
+	os.Remove("/tmp/shouldNotExists.json")
+	_, err = GetConnectorFromFile("/tmp/shouldNotExists.json")
+	assert.NotNil(err)
+	assert.IsType(&os.PathError{}, err)
+
+	ioutil.WriteFile("/tmp/connector.json", []byte("not a connector"), 0600)
+	_, err = GetConnectorFromFile("/tmp/connector.json")
+	assert.NotNil(err)
+	assert.IsType(&json.SyntaxError{}, err)
 }

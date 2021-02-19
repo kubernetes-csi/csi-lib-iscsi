@@ -20,20 +20,6 @@ type Secrets struct {
 	PasswordIn string `json:"passwordIn,omitempty"`
 }
 
-// CmdError is a custom error to provide details including the command, stderr output and exit code.
-// iscsiadm in some cases requires all of this info to determine success or failure
-type CmdError struct {
-	CMD      string
-	StdErr   string
-	ExitCode int
-}
-
-func (e *CmdError) Error() string {
-	// we don't output the command in the error string to avoid leaking any security info
-	// the command is still available in the error structure if the caller wants it though
-	return fmt.Sprintf("iscsiadm returned an error: %s, exit-code: %d", e.StdErr, e.ExitCode)
-}
-
 func iscsiCmd(args ...string) (string, error) {
 	cmd := execCommand("iscsiadm", args...)
 	debug.Printf("Run iscsiadm command: %s", strings.Join(append([]string{"iscsiadm"}, args...), " "))
@@ -45,18 +31,12 @@ func iscsiCmd(args ...string) (string, error) {
 
 	// we're using Start and Wait because we want to grab exit codes
 	err := cmd.Start()
+	if err == nil {
+		err = cmd.Wait()
+	}
 	if err != nil {
-		// This is usually a cmd not found so we'll set our own error here
 		formattedOutput := strings.Replace(string(stdout.Bytes()), "\n", "", -1)
 		iscsiadmError = fmt.Errorf("iscsiadm error: %s (%s)", formattedOutput, err.Error())
-
-	} else {
-		err = cmd.Wait()
-		if err != nil {
-			formattedOutput := strings.Replace(string(stdout.Bytes()), "\n", "", -1)
-			iscsiadmError = fmt.Errorf("iscsiadm error: %s (%s)", formattedOutput, err.Error())
-
-		}
 	}
 
 	iscsiadmDebug(string(stdout.Bytes()), iscsiadmError)

@@ -4,7 +4,67 @@ import (
 	"testing"
 
 	"github.com/prashantv/gostub"
+	"github.com/stretchr/testify/assert"
 )
+
+const defaultInterface = `
+# BEGIN RECORD 2.0-874
+iface.iscsi_ifacename = default
+iface.net_ifacename = <empty>
+iface.ipaddress = <empty>
+iface.hwaddress = <empty>
+iface.transport_name = tcp
+iface.initiatorname = <empty>
+iface.state = <empty>
+iface.vlan_id = 0
+iface.vlan_priority = 0
+iface.vlan_state = <empty>
+iface.iface_num = 0
+iface.mtu = 0
+iface.port = 0
+iface.bootproto = <empty>
+iface.subnet_mask = <empty>
+iface.gateway = <empty>
+iface.dhcp_alt_client_id_state = <empty>
+iface.dhcp_alt_client_id = <empty>
+iface.dhcp_dns = <empty>
+iface.dhcp_learn_iqn = <empty>
+iface.dhcp_req_vendor_id_state = <empty>
+iface.dhcp_vendor_id_state = <empty>
+iface.dhcp_vendor_id = <empty>
+iface.dhcp_slp_da = <empty>
+iface.fragmentation = <empty>
+iface.gratuitous_arp = <empty>
+iface.incoming_forwarding = <empty>
+iface.tos_state = <empty>
+iface.tos = 0
+iface.ttl = 0
+iface.delayed_ack = <empty>
+iface.tcp_nagle = <empty>
+iface.tcp_wsf_state = <empty>
+iface.tcp_wsf = 0
+iface.tcp_timer_scale = 0
+iface.tcp_timestamp = <empty>
+iface.redirect = <empty>
+iface.def_task_mgmt_timeout = 0
+iface.header_digest = <empty>
+iface.data_digest = <empty>
+iface.immediate_data = <empty>
+iface.initial_r2t = <empty>
+iface.data_seq_inorder = <empty>
+iface.data_pdu_inorder = <empty>
+iface.erl = 0
+iface.max_receive_data_len = 0
+iface.first_burst_len = 0
+iface.max_outstanding_r2t = 0
+iface.max_burst_len = 0
+iface.chap_auth = <empty>
+iface.bidi_chap = <empty>
+iface.strict_login_compliance = <empty>
+iface.discovery_auth = <empty>
+iface.discovery_logout = <empty>
+# END RECORD
+`
 
 func TestDiscovery(t *testing.T) {
 	tests := map[string]struct {
@@ -125,4 +185,90 @@ func TestCreateDBEntry(t *testing.T) {
 		})
 	}
 
+}
+
+func TestListInterfaces(t *testing.T) {
+	tests := map[string]struct {
+		mockedStdout     string
+		mockedExitStatus int
+		interfaces       []string
+		wantErr          bool
+	}{
+		"EmptyOutput": {
+			mockedStdout:     "",
+			mockedExitStatus: 0,
+			interfaces:       []string{""},
+			wantErr:          false,
+		},
+		"DefaultInterface": {
+			mockedStdout:     "default",
+			mockedExitStatus: 0,
+			interfaces:       []string{"default"},
+			wantErr:          false,
+		},
+		"TwoInterface": {
+			mockedStdout:     "default\ntest",
+			mockedExitStatus: 0,
+			interfaces:       []string{"default", "test"},
+			wantErr:          false,
+		},
+		"HasError": {
+			mockedStdout:     "",
+			mockedExitStatus: 1,
+			interfaces:       []string{},
+			wantErr:          true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			interfaces, err := ListInterfaces()
+
+			if tt.wantErr {
+				assert.NotNil(err)
+			} else {
+				assert.Nil(err)
+				assert.Equal(interfaces, tt.interfaces)
+			}
+		})
+	}
+}
+
+func TestShowInterface(t *testing.T) {
+	tests := map[string]struct {
+		mockedStdout     string
+		mockedExitStatus int
+		iFace            string
+		wantErr          bool
+	}{
+		"DefaultInterface": {
+			mockedStdout:     defaultInterface,
+			mockedExitStatus: 0,
+			iFace:            defaultInterface,
+			wantErr:          false,
+		},
+		"HasError": {
+			mockedStdout:     "",
+			mockedExitStatus: 1,
+			iFace:            "",
+			wantErr:          true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			interfaces, err := ShowInterface("default")
+
+			if tt.wantErr {
+				assert.NotNil(err)
+			} else {
+				assert.Nil(err)
+				assert.Equal(interfaces, tt.iFace)
+			}
+		})
+	}
 }
