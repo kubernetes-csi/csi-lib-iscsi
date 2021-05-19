@@ -59,6 +59,8 @@ type Connector struct {
 	CheckInterval   int32 `json:"check_interval"`
 	DoDiscovery     bool  `json:"do_discovery"`
 	DoCHAPDiscovery bool  `json:"do_chap_discovery"`
+	TargetIqn       string `json:"target_iqn"`
+	TargetPortals   []string `json:"target_portals"`
 }
 
 func init() {
@@ -75,7 +77,7 @@ func EnableDebugLogging(writer io.Writer) {
 
 // parseSession takes the raw stdout from the iscsiadm -m session command and encodes it into an iscsi session type
 func parseSessions(lines string) []iscsiSession {
-	entries := strings.Split(strings.TrimSpace(string(lines)), "\n")
+	entries := strings.Split(strings.TrimSpace(lines), "\n")
 	r := strings.NewReplacer("[", "",
 		"]", "")
 
@@ -146,7 +148,7 @@ func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds int, dev
 
 func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds int, deviceTransport string, osStat statFunc, filepathGlob globFunc) (bool, error) {
 	if devicePath == nil {
-		return false, fmt.Errorf("Unable to check unspecified devicePath")
+		return false, fmt.Errorf("unable to check unspecified devicePath")
 	}
 
 	var err error
@@ -224,7 +226,7 @@ func getMultipathDisk(path string) (string, error) {
 		}
 	}
 	debug.Printf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
-	return "", fmt.Errorf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
+	return "", fmt.Errorf("couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
 }
 
 // Connect attempts to connect a volume to this node using the provided Connector info
@@ -238,7 +240,7 @@ func Connect(c Connector) (string, error) {
 	}
 
 	if c.RetryCount < 0 || c.CheckInterval < 0 {
-		return "", fmt.Errorf("Invalid RetryCount and CheckInterval combination, both must be positive integers. "+
+		return "", fmt.Errorf("invalid RetryCount and CheckInterval combination, both must be positive integers. "+
 			"RetryCount: %d, CheckInterval: %d", c.RetryCount, c.CheckInterval)
 	}
 	var devicePaths []string
@@ -316,7 +318,7 @@ func Connect(c Connector) (string, error) {
 			devicePaths = append(devicePaths, devicePath)
 			continue
 		} else if err != nil {
-			lastErr = fmt.Errorf("Couldn't attach disk, err: %v", err)
+			lastErr = fmt.Errorf("couldn't attach disk, err: %v", err)
 		}
 	}
 
@@ -376,7 +378,7 @@ func DisconnectVolume(c Connector) error {
 		if err != nil {
 			return err
 		}
-		err := FlushMultipathDevice(c.DevicePath)
+		err = FlushMultipathDevice(c.DevicePath)
 		if err != nil {
 			return err
 		}
@@ -456,7 +458,7 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 
 	}
 	data := Connector{}
-	err = json.Unmarshal([]byte(f), &data)
+	err = json.Unmarshal(f, &data)
 	if err != nil {
 		return &Connector{}, err
 	}

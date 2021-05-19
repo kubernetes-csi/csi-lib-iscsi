@@ -116,7 +116,7 @@ func Discoverydb(tp, iface string, discoverySecrets Secrets, chapDiscovery bool)
 	baseArgs := []string{"-m", "discoverydb", "-t", "sendtargets", "-p", tp, "-I", iface}
 	out, err := iscsiCmd(append(baseArgs, []string{"-o", "new"}...)...)
 	if err != nil {
-		return fmt.Errorf("failed to create new entry of target in discoverydb, output: %v, err: %v", string(out), err)
+		return fmt.Errorf("failed to create new entry of target in discoverydb, output: %v, err: %v", out, err)
 	}
 
 	if chapDiscovery {
