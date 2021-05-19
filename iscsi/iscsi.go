@@ -77,7 +77,7 @@ func EnableDebugLogging(writer io.Writer) {
 
 // parseSession takes the raw stdout from the iscsiadm -m session command and encodes it into an iscsi session type
 func parseSessions(lines string) []iscsiSession {
-	entries := strings.Split(strings.TrimSpace(string(lines)), "\n")
+	entries := strings.Split(strings.TrimSpace(lines), "\n")
 	r := strings.NewReplacer("[", "",
 		"]", "")
 
@@ -458,7 +458,7 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 
 	}
 	data := Connector{}
-	err = json.Unmarshal([]byte(f), &data)
+	err = json.Unmarshal(f, &data)
 	if err != nil {
 		return &Connector{}, err
 	}
