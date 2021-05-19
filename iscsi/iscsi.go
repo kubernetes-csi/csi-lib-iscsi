@@ -59,6 +59,8 @@ type Connector struct {
 	CheckInterval   int32 `json:"check_interval"`
 	DoDiscovery     bool  `json:"do_discovery"`
 	DoCHAPDiscovery bool  `json:"do_chap_discovery"`
+	TargetIqn       string `json:"target_iqn"`
+	TargetPortals   []string `json:"target_portals"`
 }
 
 func init() {
