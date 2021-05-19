@@ -148,7 +148,7 @@ func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds int, dev
 
 func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds int, deviceTransport string, osStat statFunc, filepathGlob globFunc) (bool, error) {
 	if devicePath == nil {
-		return false, fmt.Errorf("Unable to check unspecified devicePath")
+		return false, fmt.Errorf("unable to check unspecified devicePath")
 	}
 
 	var err error
@@ -226,7 +226,7 @@ func getMultipathDisk(path string) (string, error) {
 		}
 	}
 	debug.Printf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
-	return "", fmt.Errorf("Couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
+	return "", fmt.Errorf("couldn't find dm-* path for path: %s, found non dm-* path: %s", path, devicePath)
 }
 
 // Connect attempts to connect a volume to this node using the provided Connector info
@@ -240,7 +240,7 @@ func Connect(c Connector) (string, error) {
 	}
 
 	if c.RetryCount < 0 || c.CheckInterval < 0 {
-		return "", fmt.Errorf("Invalid RetryCount and CheckInterval combination, both must be positive integers. "+
+		return "", fmt.Errorf("invalid RetryCount and CheckInterval combination, both must be positive integers. "+
 			"RetryCount: %d, CheckInterval: %d", c.RetryCount, c.CheckInterval)
 	}
 	var devicePaths []string
@@ -318,7 +318,7 @@ func Connect(c Connector) (string, error) {
 			devicePaths = append(devicePaths, devicePath)
 			continue
 		} else if err != nil {
-			lastErr = fmt.Errorf("Couldn't attach disk, err: %v", err)
+			lastErr = fmt.Errorf("couldn't attach disk, err: %v", err)
 		}
 	}
 
