@@ -567,7 +567,7 @@ func RemoveSCSIDevices(devices ...Device) error {
 	if len(errs) > 0 {
 		return errs[0]
 	}
-	debug.Println("Finshed removing SCSI devices.")
+	debug.Println("Finished removing SCSI devices.")
 	return nil
 }
 
