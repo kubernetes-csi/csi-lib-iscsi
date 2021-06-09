@@ -433,7 +433,7 @@ func (c *Connector) DisconnectVolume() error {
 
 // getMountTargetDevice returns the device to be mounted among the configured devices
 func (c *Connector) getMountTargetDevice() (*Device, error) {
-	if c.IsMultipathEnabled() {
+	if len(c.Devices) > 1 {
 		multipathDevice, err := getMultipathDevice(c.Devices)
 		if err != nil {
 			debug.Printf("mount target is not a multipath device: %v", err)
@@ -452,7 +452,7 @@ func (c *Connector) getMountTargetDevice() (*Device, error) {
 
 // IsMultipathEnabled check if multipath is enabled on devices handled by this connector
 func (c *Connector) IsMultipathEnabled() bool {
-	return len(c.Devices) > 1
+	return c.MountTargetDevice.Type == "mpath"
 }
 
 // GetSCSIDevices get SCSI devices from device paths
@@ -499,7 +499,7 @@ func lsblk(devicePaths []string, strict bool) (*deviceInfo, error) {
 			if strict || ee.ExitCode() != 64 { // ignore the error if some devices have been found when not strict
 				return nil, err
 			}
-			debug.Printf("lsblk could find only some devices: %v", err)
+			debug.Printf("Could find only some devices: %v", err)
 		} else {
 			return nil, err
 		}
