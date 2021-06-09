@@ -279,7 +279,7 @@ func (c *Connector) Connect() (string, error) {
 	// GetISCSIDevices returns all devices if no paths are given
 	if len(devicePaths) < 1 {
 		c.Devices = []Device{}
-	} else if c.Devices, err = GetISCSIDevices(devicePaths); err != nil {
+	} else if c.Devices, err = GetISCSIDevices(devicePaths, true); err != nil {
 		return "", err
 	}
 
@@ -457,10 +457,10 @@ func (c *Connector) IsMultipathEnabled() bool {
 
 // GetSCSIDevices get SCSI devices from device paths
 // It will returns all SCSI devices if no paths are given
-func GetSCSIDevices(devicePaths []string) ([]Device, error) {
+func GetSCSIDevices(devicePaths []string, strict bool) ([]Device, error) {
 	debug.Printf("Getting info about SCSI devices %s.\n", devicePaths)
 
-	deviceInfo, err := lsblk(devicePaths)
+	deviceInfo, err := lsblk(devicePaths, strict)
 	if err != nil {
 		debug.Printf("An error occured while looking info about SCSI devices: %v", err)
 		return nil, err
@@ -471,8 +471,8 @@ func GetSCSIDevices(devicePaths []string) ([]Device, error) {
 
 // GetISCSIDevices get iSCSI devices from device paths
 // It will returns all iSCSI devices if no paths are given
-func GetISCSIDevices(devicePaths []string) (devices []Device, err error) {
-	scsiDevices, err := GetSCSIDevices(devicePaths)
+func GetISCSIDevices(devicePaths []string, strict bool) (devices []Device, err error) {
+	scsiDevices, err := GetSCSIDevices(devicePaths, strict)
 	if err != nil {
 		return
 	}
@@ -488,21 +488,26 @@ func GetISCSIDevices(devicePaths []string) (devices []Device, err error) {
 }
 
 // lsblk execute the lsblk commands
-func lsblk(devicePaths []string) (*deviceInfo, error) {
+func lsblk(devicePaths []string, strict bool) (*deviceInfo, error) {
 	flags := []string{"-J", "-o", "NAME,HCTL,TYPE,TRAN,SIZE"}
 	command := execCommand("lsblk", append(flags, devicePaths...)...)
 	debug.Println(command.String())
 	out, err := command.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("%s, (%v)", strings.Trim(string(ee.Stderr), "\n"), ee)
+			err = fmt.Errorf("%s, (%w)", strings.Trim(string(ee.Stderr), "\n"), ee)
+			if strict || ee.ExitCode() != 64 { // ignore the error if some devices have been found when not strict
+				return nil, err
+			}
+			debug.Printf("lsblk could find only some devices: %v", err)
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	var deviceInfo deviceInfo
-	if err = json.Unmarshal(out, &deviceInfo); err != nil {
-		return nil, err
+	if jsonErr := json.Unmarshal(out, &deviceInfo); jsonErr != nil {
+		return nil, jsonErr
 	}
 
 	return &deviceInfo, nil
@@ -603,13 +608,13 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 		devicePaths = append(devicePaths, device.GetPath())
 	}
 
-	if devices, err := GetSCSIDevices([]string{c.MountTargetDevice.GetPath()}); err != nil {
+	if devices, err := GetSCSIDevices([]string{c.MountTargetDevice.GetPath()}, false); err != nil {
 		return nil, err
 	} else {
 		c.MountTargetDevice = &devices[0]
 	}
 
-	if c.Devices, err = GetSCSIDevices(devicePaths); err != nil {
+	if c.Devices, err = GetSCSIDevices(devicePaths, false); err != nil {
 		return nil, err
 	}
 

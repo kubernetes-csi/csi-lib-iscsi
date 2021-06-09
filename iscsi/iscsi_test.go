@@ -581,8 +581,12 @@ func Test_getMultipathDevice(t *testing.T) {
 func Test_lsblk(t *testing.T) {
 	sda := Device{Name: "sda", Children: []Device{{}}}
 
+	sdaOutput, err := json.Marshal(deviceInfo{BlockDevices: []Device{sda}})
+	assert.New(t).Nil(err, "could not setup test")
+
 	tests := map[string]struct {
 		devicePaths      []string
+		strict           bool
 		mockedStdout     string
 		mockedDevices    []Device
 		mockedExitStatus int
@@ -591,16 +595,32 @@ func Test_lsblk(t *testing.T) {
 		"Basic": {
 			devicePaths:   []string{"/dev/sda"},
 			mockedDevices: []Device{sda},
+			mockedStdout:  string(sdaOutput),
 		},
 		"NotABlockDevice": {
 			devicePaths:      []string{"/dev/sdzz"},
 			mockedStdout:     "lsblk: sdzz: not a block device",
 			mockedExitStatus: 32,
+			wantErr:          true,
 		},
 		"InvalidJson": {
 			mockedStdout:     "{",
 			mockedExitStatus: 0,
 			wantErr:          true,
+		},
+		"StrictWithMissingDevices": {
+			devicePaths:      []string{"/dev/sda", "/dev/sdb"},
+			strict:           true,
+			mockedDevices:    []Device{sda},
+			mockedStdout:     string(sdaOutput),
+			mockedExitStatus: 64,
+			wantErr:          true,
+		},
+		"NotStrictWithMissingDevices": {
+			devicePaths:      []string{"/dev/sda", "/dev/sdb"},
+			mockedDevices:    []Device{sda},
+			mockedStdout:     string(sdaOutput),
+			mockedExitStatus: 64,
 		},
 	}
 
@@ -608,17 +628,10 @@ func Test_lsblk(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			mockedStdout := tt.mockedStdout
-			if mockedStdout == "" {
-				out, err := json.Marshal(deviceInfo{BlockDevices: tt.mockedDevices})
-				assert.Nil(err, "could not setup test")
-				mockedStdout = string(out)
-			}
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			deviceInfo, err := lsblk(tt.devicePaths, tt.strict)
 
-			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, mockedStdout)).Reset()
-			deviceInfo, err := lsblk(tt.devicePaths)
-
-			if tt.mockedExitStatus != 0 || tt.wantErr {
+			if tt.wantErr {
 				assert.Nil(deviceInfo)
 				assert.NotNil(err)
 			} else {
