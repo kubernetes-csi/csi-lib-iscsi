@@ -1,6 +1,7 @@
 package iscsi
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/prashantv/gostub"
@@ -68,20 +69,20 @@ iface.discovery_logout = <empty>
 
 func TestDiscovery(t *testing.T) {
 	tests := map[string]struct {
-		tgtPortal        string
-		iface            string
-		discoverySecret  Secrets
-		chapDiscovery    bool
-		wantErr          bool
-		mockedStdout     string
-		mockedExitStatus int
+		tgtPortal       string
+		iface           string
+		discoverySecret Secrets
+		chapDiscovery   bool
+		wantErr         bool
+		mockedStdout    string
+		mockedCmdError  error
 	}{
 		"DiscoverySuccess": {
-			tgtPortal:        "172.18.0.2:3260",
-			iface:            "default",
-			chapDiscovery:    false,
-			mockedStdout:     "172.18.0.2:3260,1 iqn.2016-09.com.openebs.jiva:store1\n",
-			mockedExitStatus: 0,
+			tgtPortal:      "172.18.0.2:3260",
+			iface:          "default",
+			chapDiscovery:  false,
+			mockedStdout:   "172.18.0.2:3260,1 iqn.2016-09.com.openebs.jiva:store1\n",
+			mockedCmdError: nil,
 		},
 
 		"ConnectionFailure": {
@@ -92,8 +93,8 @@ func TestDiscovery(t *testing.T) {
 iscsiadm: cannot make connection to 172.18.0.2: Connection refused
 iscsiadm: connection login retries (reopen_max) 5 exceeded
 iscsiadm: Could not perform SendTargets discovery: encountered connection failure\n`,
-			mockedExitStatus: 4,
-			wantErr:          true,
+			mockedCmdError: exec.Command("exit", "4").Run(),
+			wantErr:        true,
 		},
 
 		"ChapEntrySuccess": {
@@ -104,8 +105,8 @@ iscsiadm: Could not perform SendTargets discovery: encountered connection failur
 				UserNameIn: "dummyuser",
 				PasswordIn: "dummypass",
 			},
-			mockedStdout:     "172.18.0.2:3260,1 iqn.2016-09.com.openebs.jiva:store1\n",
-			mockedExitStatus: 0,
+			mockedStdout:   "172.18.0.2:3260,1 iqn.2016-09.com.openebs.jiva:store1\n",
+			mockedCmdError: nil,
 		},
 
 		"ChapEntryFailure": {
@@ -119,14 +120,14 @@ iscsiadm: Could not perform SendTargets discovery: encountered connection failur
 			mockedStdout: `iscsiadm: Login failed to authenticate with target
 iscsiadm: discovery login to 172.18.0.2 rejected: initiator error (02/01), non-retryable, giving up
 iscsiadm: Could not perform SendTargets discovery.\n`,
-			mockedExitStatus: 4,
-			wantErr:          true,
+			mockedCmdError: exec.Command("exit", "4").Run(),
+			wantErr:        true,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
 			err := Discoverydb(tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Discoverydb() error = %v, wantErr %v", err, tt.wantErr)
@@ -138,14 +139,14 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 
 func TestCreateDBEntry(t *testing.T) {
 	tests := map[string]struct {
-		tgtPortal        string
-		tgtIQN           string
-		iface            string
-		discoverySecret  Secrets
-		sessionSecret    Secrets
-		wantErr          bool
-		mockedStdout     string
-		mockedExitStatus int
+		tgtPortal       string
+		tgtIQN          string
+		iface           string
+		discoverySecret Secrets
+		sessionSecret   Secrets
+		wantErr         bool
+		mockedStdout    string
+		mockedCmdError  error
 	}{
 		"CreateDBEntryWithChapDiscoverySuccess": {
 			tgtPortal: "192.168.1.107:3260",
@@ -161,22 +162,22 @@ func TestCreateDBEntry(t *testing.T) {
 				PasswordIn:  "dummypass",
 				SecretsType: "chap",
 			},
-			mockedStdout:     nodeDB,
-			mockedExitStatus: 0,
+			mockedStdout:   nodeDB,
+			mockedCmdError: nil,
 		},
 		"CreateDBEntryWithChapDiscoveryFailure": {
-			tgtPortal:        "172.18.0.2:3260",
-			tgtIQN:           "iqn.2016-09.com.openebs.jiva:store1",
-			iface:            "default",
-			mockedStdout:     "iscsiadm: No records found\n",
-			mockedExitStatus: 21,
-			wantErr:          true,
+			tgtPortal:      "172.18.0.2:3260",
+			tgtIQN:         "iqn.2016-09.com.openebs.jiva:store1",
+			iface:          "default",
+			mockedStdout:   "iscsiadm: No records found\n",
+			mockedCmdError: exec.Command("exit", "21").Run(),
+			wantErr:        true,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
 			err := CreateDBEntry(tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateDBEntry() error = %v, wantErr %v", err, tt.wantErr)
@@ -189,41 +190,41 @@ func TestCreateDBEntry(t *testing.T) {
 
 func TestListInterfaces(t *testing.T) {
 	tests := map[string]struct {
-		mockedStdout     string
-		mockedExitStatus int
-		interfaces       []string
-		wantErr          bool
+		mockedStdout   string
+		mockedCmdError error
+		interfaces     []string
+		wantErr        bool
 	}{
 		"EmptyOutput": {
-			mockedStdout:     "",
-			mockedExitStatus: 0,
-			interfaces:       []string{""},
-			wantErr:          false,
+			mockedStdout:   "",
+			mockedCmdError: nil,
+			interfaces:     []string{""},
+			wantErr:        false,
 		},
 		"DefaultInterface": {
-			mockedStdout:     "default",
-			mockedExitStatus: 0,
-			interfaces:       []string{"default"},
-			wantErr:          false,
+			mockedStdout:   "default",
+			mockedCmdError: nil,
+			interfaces:     []string{"default"},
+			wantErr:        false,
 		},
 		"TwoInterface": {
-			mockedStdout:     "default\ntest",
-			mockedExitStatus: 0,
-			interfaces:       []string{"default", "test"},
-			wantErr:          false,
+			mockedStdout:   "default\ntest",
+			mockedCmdError: nil,
+			interfaces:     []string{"default", "test"},
+			wantErr:        false,
 		},
 		"HasError": {
-			mockedStdout:     "",
-			mockedExitStatus: 1,
-			interfaces:       []string{},
-			wantErr:          true,
+			mockedStdout:   "",
+			mockedCmdError: exec.Command("exit", "1").Run(),
+			interfaces:     []string{},
+			wantErr:        true,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
 			interfaces, err := ListInterfaces()
 
 			if tt.wantErr {
@@ -238,29 +239,29 @@ func TestListInterfaces(t *testing.T) {
 
 func TestShowInterface(t *testing.T) {
 	tests := map[string]struct {
-		mockedStdout     string
-		mockedExitStatus int
-		iFace            string
-		wantErr          bool
+		mockedStdout   string
+		mockedCmdError error
+		iFace          string
+		wantErr        bool
 	}{
 		"DefaultInterface": {
-			mockedStdout:     defaultInterface,
-			mockedExitStatus: 0,
-			iFace:            defaultInterface,
-			wantErr:          false,
+			mockedStdout:   defaultInterface,
+			mockedCmdError: nil,
+			iFace:          defaultInterface,
+			wantErr:        false,
 		},
 		"HasError": {
-			mockedStdout:     "",
-			mockedExitStatus: 1,
-			iFace:            "",
-			wantErr:          true,
+			mockedStdout:   "",
+			mockedCmdError: exec.Command("exit", "1").Run(),
+			iFace:          "",
+			wantErr:        true,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
 			interfaces, err := ShowInterface("default")
 
 			if tt.wantErr {

@@ -248,7 +248,7 @@ func Test_extractTransportName(t *testing.T) {
 
 func Test_sessionExists(t *testing.T) {
 	fakeOutput := "tcp: [4] 192.168.1.107:3260,1 iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced (non-flash)\n"
-	defer gostub.Stub(&execCommand, makeFakeExecCommand(0, fakeOutput)).Reset()
+	defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(fakeOutput), nil)).Reset()
 
 	type args struct {
 		tgtPortal string

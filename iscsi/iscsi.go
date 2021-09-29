@@ -318,6 +318,14 @@ func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTranspo
 	// to avoid establishing additional sessions to the same target.
 	if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
 		debug.Printf("Failed to rescan session, err: %v", err)
+		if os.IsTimeout(err) {
+			debug.Printf("iscsiadm timeouted, logging out")
+			cmd := execCommand("iscsiadm", append(baseArgs, []string{"-u"}...)...)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("could not logout from target: %s", out)
+			}
+		}
 	}
 
 	// create our devicePath that we'll be looking for based on the transport being used

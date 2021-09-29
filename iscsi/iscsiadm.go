@@ -1,9 +1,9 @@
 package iscsi
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Secrets provides optional iscsi security credentials (CHAP settings)
@@ -21,26 +21,12 @@ type Secrets struct {
 }
 
 func iscsiCmd(args ...string) (string, error) {
-	cmd := execCommand("iscsiadm", args...)
+	stdout, err := execWithTimeout("iscsiadm", args, time.Second*3)
+
 	debug.Printf("Run iscsiadm command: %s", strings.Join(append([]string{"iscsiadm"}, args...), " "))
-	var stdout bytes.Buffer
-	var iscsiadmError error
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-	defer stdout.Reset()
+	iscsiadmDebug(string(stdout), err)
 
-	// we're using Start and Wait because we want to grab exit codes
-	err := cmd.Start()
-	if err == nil {
-		err = cmd.Wait()
-	}
-	if err != nil {
-		formattedOutput := strings.Replace(string(stdout.Bytes()), "\n", "", -1)
-		iscsiadmError = fmt.Errorf("iscsiadm error: %s (%s)", formattedOutput, err.Error())
-	}
-
-	iscsiadmDebug(string(stdout.Bytes()), iscsiadmError)
-	return string(stdout.Bytes()), iscsiadmError
+	return string(stdout), err
 }
 
 func iscsiadmDebug(output string, cmdError error) {
