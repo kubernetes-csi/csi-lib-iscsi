@@ -39,13 +39,6 @@ type iscsiSession struct {
 	Name     string
 }
 
-// TargetInfo contains connection information to connect to an iSCSI endpoint
-type TargetInfo struct {
-	Iqn    string `json:"iqn"`
-	Portal string `json:"portal"`
-	Port   string `json:"port"`
-}
-
 type deviceInfo struct {
 	BlockDevices []Device
 }
@@ -69,13 +62,14 @@ type HCTL struct {
 
 // Connector provides a struct to hold all of the needed parameters to make our iSCSI connection
 type Connector struct {
-	VolumeName       string       `json:"volume_name"`
-	Targets          []TargetInfo `json:"targets"`
-	Lun              int32        `json:"lun"`
-	AuthType         string       `json:"auth_type"`
-	DiscoverySecrets Secrets      `json:"discovery_secrets"`
-	SessionSecrets   Secrets      `json:"session_secrets"`
-	Interface        string       `json:"interface"`
+	VolumeName       string   `json:"volume_name"`
+	TargetIqn        string   `json:"target_iqn"`
+	TargetPortals    []string `json:"target_portal"`
+	Lun              int32    `json:"lun"`
+	AuthType         string   `json:"auth_type"`
+	DiscoverySecrets Secrets  `json:"discovery_secrets"`
+	SessionSecrets   Secrets  `json:"session_secrets"`
+	Interface        string   `json:"interface"`
 
 	MountTargetDevice *Device  `json:"mount_target_device"`
 	Devices           []Device `json:"devices"`
@@ -247,6 +241,11 @@ func getMultipathDevice(devices []Device) (*Device, error) {
 	return multipathDevice, nil
 }
 
+// Connect is for backward-compatiblity with c.Connect()
+func Connect(c Connector) (string, error) {
+	return c.Connect()
+}
+
 // Connect attempts to connect a volume to this node using the provided Connector info
 func (c *Connector) Connect() (string, error) {
 	if c.RetryCount == 0 {
@@ -270,8 +269,8 @@ func (c *Connector) Connect() (string, error) {
 
 	var lastErr error
 	var devicePaths []string
-	for _, target := range c.Targets {
-		devicePath, err := c.connectTarget(&target, iFace, iscsiTransport)
+	for _, target := range c.TargetPortals {
+		devicePath, err := c.connectTarget(c.TargetIqn, target, iFace, iscsiTransport)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -311,9 +310,15 @@ func (c *Connector) Connect() (string, error) {
 	return c.MountTargetDevice.GetPath(), nil
 }
 
-func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTransport string) (string, error) {
-	debug.Printf("Process targetIqn: %s, portal: %s\n", target.Iqn, target.Portal)
-	baseArgs := []string{"-m", "node", "-T", target.Iqn, "-p", target.Portal}
+func (c *Connector) connectTarget(targetIqn string, target string, iFace string, iscsiTransport string) (string, error) {
+	debug.Printf("Process targetIqn: %s, portal: %s\n", targetIqn, target)
+	targetParts := strings.Split(target, ":")
+	targetPortal := targetParts[0]
+	targetPort := defaultPort
+	if len(targetParts) > 1 {
+		targetPort = targetParts[1]
+	}
+	baseArgs := []string{"-m", "node", "-T", targetIqn, "-p", targetPortal}
 	// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
 	// to avoid establishing additional sessions to the same target.
 	if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
@@ -329,18 +334,14 @@ func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTranspo
 	}
 
 	// create our devicePath that we'll be looking for based on the transport being used
-	port := defaultPort
-	if target.Port != "" {
-		port = target.Port
-	}
 	// portal with port
-	portal := strings.Join([]string{target.Portal, port}, ":")
-	devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+	portal := strings.Join([]string{targetPortal, targetPort}, ":")
+	devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
 	if iscsiTransport != "tcp" {
-		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
 	}
 
-	exists, _ := sessionExists(portal, target.Iqn)
+	exists, _ := sessionExists(portal, targetIqn)
 	if exists {
 		debug.Printf("Session already exists, checking if device path %q exists", devicePath)
 		if err := waitForPathToExist(&devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
@@ -349,12 +350,12 @@ func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTranspo
 		return devicePath, nil
 	}
 
-	if err := c.discoverTarget(target, iFace, portal); err != nil {
+	if err := c.discoverTarget(targetIqn, iFace, portal); err != nil {
 		return "", err
 	}
 
 	// perform the login
-	err := Login(target.Iqn, portal)
+	err := Login(targetIqn, portal)
 	if err != nil {
 		debug.Printf("Failed to login: %v", err)
 		return "", err
@@ -368,7 +369,7 @@ func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTranspo
 	return devicePath, nil
 }
 
-func (c *Connector) discoverTarget(target *TargetInfo, iFace string, portal string) error {
+func (c *Connector) discoverTarget(targetIqn string, iFace string, portal string) error {
 	if c.DoDiscovery {
 		// build discoverydb and discover iscsi target
 		if err := Discoverydb(portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
@@ -379,7 +380,7 @@ func (c *Connector) discoverTarget(target *TargetInfo, iFace string, portal stri
 
 	if c.DoCHAPDiscovery {
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(target.Iqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
+		err := CreateDBEntry(targetIqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
 		if err != nil {
 			debug.Printf("Error creating db entry: %s\n", err.Error())
 			return err
@@ -389,21 +390,25 @@ func (c *Connector) discoverTarget(target *TargetInfo, iFace string, portal stri
 	return nil
 }
 
-// Disconnect performs a disconnect operation from an appliance.
-// Be sure to disconnect all deivces properly before doing this as it can result in data loss.
-func (c *Connector) Disconnect() {
-	for _, target := range c.Targets {
-		Logout(target.Iqn, target.Portal)
+// Disconnect is for backward-compatibility with c.Disconnect()
+func Disconnect(targetIqn string, targets []string) {
+	for _, target := range targets {
+		targetPortal := strings.Split(target, ":")[0]
+		Logout(targetIqn, targetPortal)
 	}
 
 	deleted := map[string]bool{}
-	for _, target := range c.Targets {
-		if _, ok := deleted[target.Iqn]; ok {
-			continue
-		}
-		deleted[target.Iqn] = true
-		DeleteDBEntry(target.Iqn)
+	if _, ok := deleted[targetIqn]; ok {
+		return
 	}
+	deleted[targetIqn] = true
+	DeleteDBEntry(targetIqn)
+}
+
+// Disconnect performs a disconnect operation from an appliance.
+// Be sure to disconnect all deivces properly before doing this as it can result in data loss.
+func (c *Connector) Disconnect() {
+	Disconnect(c.TargetIqn, c.TargetPortals)
 }
 
 // DisconnectVolume removes a volume from a Linux host.
@@ -586,6 +591,11 @@ func RemoveSCSIDevices(devices ...Device) error {
 	}
 	debug.Println("Finished removing SCSI devices.")
 	return nil
+}
+
+// PersistConnector is for backward-compatibility with c.Persist()
+func PersistConnector(c *Connector, filePath string) error {
+	return c.Persist(filePath)
 }
 
 // Persist persists the Connector to the specified file (ie /var/lib/pfile/myConnector.json)

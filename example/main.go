@@ -26,25 +26,14 @@ func main() {
 		iscsi.EnableDebugLogging(os.Stdout)
 	}
 
-	var targets []iscsi.TargetInfo
-
-	for _, tgtp := range tgtps {
-		parts := strings.Split(tgtp, ":")
-		targets = append(targets, iscsi.TargetInfo{
-			// Specify the target iqn we're dealing with
-			Iqn:    *iqn,
-			Portal: parts[0],
-			Port:   parts[1],
-		})
-	}
-
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
 	// you can simplify interactions to simple calls like "Connect" and "Disconnect"
 	c := &iscsi.Connector{
 		// Our example uses chap
 		AuthType: "chap",
 		// List of targets must be >= 1 (>1 signals multipath/mpio)
-		Targets: targets,
+		TargetIqn:     *iqn,
+		TargetPortals: tgtps,
 		// CHAP can be setup up for discovery as well as sessions, our example
 		// device only uses CHAP security for sessions, for those that use Discovery
 		// as well, we'd add a DiscoverySecrets entry the same way

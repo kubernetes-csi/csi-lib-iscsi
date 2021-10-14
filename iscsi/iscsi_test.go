@@ -668,7 +668,8 @@ func TestConnectorPersistance(t *testing.T) {
 	}
 	c := Connector{
 		VolumeName:        "fake volume name",
-		Targets:           []TargetInfo{},
+		TargetIqn:         "fake target iqn",
+		TargetPortals:     []string{},
 		Lun:               42,
 		AuthType:          "fake auth type",
 		DiscoverySecrets:  secret,
