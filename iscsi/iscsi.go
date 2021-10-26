@@ -39,9 +39,7 @@ type iscsiSession struct {
 	Name     string
 }
 
-type deviceInfo struct {
-	BlockDevices []Device
-}
+type deviceInfo []Device
 
 // Device contains informations about a device
 type Device struct {
@@ -483,7 +481,7 @@ func GetSCSIDevices(devicePaths []string, strict bool) ([]Device, error) {
 		return nil, err
 	}
 
-	return deviceInfo.BlockDevices, nil
+	return deviceInfo, nil
 }
 
 // GetISCSIDevices get iSCSI devices from device paths
@@ -505,8 +503,8 @@ func GetISCSIDevices(devicePaths []string, strict bool) (devices []Device, err e
 }
 
 // lsblk execute the lsblk commands
-func lsblk(devicePaths []string, strict bool) (*deviceInfo, error) {
-	flags := []string{"-J", "-o", "NAME,HCTL,TYPE,TRAN,SIZE"}
+func lsblk(devicePaths []string, strict bool) (deviceInfo, error) {
+	flags := []string{"-rn", "-o", "NAME,KNAME,PKNAME,HCTL,TYPE,TRAN,SIZE"}
 	command := execCommand("lsblk", append(flags, devicePaths...)...)
 	debug.Println(command.String())
 	out, err := command.Output()
@@ -522,12 +520,54 @@ func lsblk(devicePaths []string, strict bool) (*deviceInfo, error) {
 		}
 	}
 
-	var deviceInfo deviceInfo
-	if jsonErr := json.Unmarshal(out, &deviceInfo); jsonErr != nil {
-		return nil, jsonErr
+	var devices []*Device
+	devicesMap := make(map[string]*Device)
+	pkNames := []string{}
+
+	// Parse devices
+	lines := strings.Split(strings.Trim(string(out), "\n"), "\n")
+	for _, line := range lines {
+		columns := strings.Split(line, " ")
+		if len(columns) < 5 {
+			return nil, fmt.Errorf("invalid output from lsblk: %s", line)
+		}
+		device := &Device{
+			Name:      columns[0],
+			Hctl:      columns[3],
+			Type:      columns[4],
+			Transport: columns[5],
+			Size:      columns[6],
+		}
+		devices = append(devices, device)
+		pkNames = append(pkNames, columns[2])
+		devicesMap[columns[1]] = device
 	}
 
-	return &deviceInfo, nil
+	// Reconstruct devices tree
+	for i, pkName := range pkNames {
+		if pkName == "" {
+			continue
+		}
+		device := devices[i]
+		parent, ok := devicesMap[pkName]
+		if !ok {
+			return nil, fmt.Errorf("invalid output from lsblk: parent device %q not found", pkName)
+		}
+		if parent.Children == nil {
+			parent.Children = []Device{}
+		}
+		parent.Children = append(devicesMap[pkName].Children, *device)
+	}
+
+	// Filter devices to keep only the roots of the tree
+	var deviceInfo deviceInfo
+	for i, device := range devices {
+		if pkNames[i] == "" {
+			deviceInfo = append(deviceInfo, *device)
+		}
+	}
+
+	return deviceInfo, nil
 }
 
 // writeInSCSIDeviceFile write into special devices files to change devices state
