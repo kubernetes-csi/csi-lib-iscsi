@@ -181,29 +181,25 @@ func GetSessions() (string, error) {
 
 // Login performs an iscsi login for the specified target
 func Login(tgtIQN, portal string) error {
+	debug.Println("Begin Login...")
 	baseArgs := []string{"-m", "node", "-T", tgtIQN, "-p", portal}
-	_, err := iscsiCmd(append(baseArgs, []string{"-l"}...)...)
-	if err != nil {
+	if _, err := iscsiCmd(append(baseArgs, []string{"-l"}...)...); err != nil {
 		//delete the node record from database
 		iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
 		return fmt.Errorf("failed to sendtargets to portal %s, err: %v", portal, err)
 	}
-	return err
-}
-
-// Logout logs out the specified target, if the target is not logged in it's not considered an error
-func Logout(tgtIQN string, portals []string) error {
-	debug.Println("Begin Logout...")
-	baseArgs := []string{"-m", "node", "-T", tgtIQN}
-	for _, p := range portals {
-		debug.Printf("attempting logout for portal: %s", p)
-		args := append(baseArgs, []string{"-p", p, "-u"}...)
-		iscsiCmd(args...)
-	}
 	return nil
 }
 
-// DeleteDBEntry deletes the iscsi db entry fo rthe specified target
+// Logout logs out the specified target
+func Logout(tgtIQN, portal string) error {
+	debug.Println("Begin Logout...")
+	args := []string{"-m", "node", "-T", tgtIQN, "-p", portal, "-u"}
+	iscsiCmd(args...)
+	return nil
+}
+
+// DeleteDBEntry deletes the iscsi db entry for the specified target
 func DeleteDBEntry(tgtIQN string) error {
 	debug.Println("Begin DeleteDBEntry...")
 	args := []string{"-m", "node", "-T", tgtIQN, "-o", "delete"}

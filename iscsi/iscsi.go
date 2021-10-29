@@ -73,12 +73,10 @@ type Connector struct {
 	MountTargetDevice *Device  `json:"mount_target_device"`
 	Devices           []Device `json:"devices"`
 
-	RetryCount      int32    `json:"retry_count"`
-	CheckInterval   int32    `json:"check_interval"`
-	DoDiscovery     bool     `json:"do_discovery"`
-	DoCHAPDiscovery bool     `json:"do_chap_discovery"`
-	TargetIqn       string   `json:"target_iqn"`
-	TargetPortals   []string `json:"target_portals"`
+	RetryCount      uint `json:"retry_count"`
+	CheckInterval   uint `json:"check_interval"`
+	DoDiscovery     bool `json:"do_discovery"`
+	DoCHAPDiscovery bool `json:"do_chap_discovery"`
 }
 
 func init() {
@@ -161,47 +159,60 @@ func getCurrentSessions() ([]iscsiSession, error) {
 	return sessions, err
 }
 
-func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds int, deviceTransport string) (bool, error) {
+// waitForPathToExist wait for a file at a path to exists on disk
+func waitForPathToExist(devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string) error {
 	return waitForPathToExistImpl(devicePath, maxRetries, intervalSeconds, deviceTransport, os.Stat, filepath.Glob)
 }
 
-func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds int, deviceTransport string, osStat statFunc, filepathGlob globFunc) (bool, error) {
+func waitForPathToExistImpl(devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string, osStat statFunc, filepathGlob globFunc) error {
 	if devicePath == nil {
-		return false, fmt.Errorf("unable to check unspecified devicePath")
+		return fmt.Errorf("unable to check unspecified devicePath")
 	}
 
-	var err error
-	for i := 0; i < maxRetries; i++ {
-		err = nil
-		if deviceTransport == "tcp" {
-			_, err = osStat(*devicePath)
-			if err != nil && !os.IsNotExist(err) {
+	for i := uint(0); i <= maxRetries; i++ {
+		if i != 0 {
+			debug.Printf("Device path %q doesn't exists yet, retrying in %d seconds (%d/%d)", *devicePath, intervalSeconds, i, maxRetries)
+			time.Sleep(time.Second * time.Duration(intervalSeconds))
+		}
+
+		if err := pathExistsImpl(devicePath, deviceTransport, osStat, filepathGlob); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	return os.ErrNotExist
+}
+
+// pathExists checks if a file at a path exists on disk
+func pathExists(devicePath *string, deviceTransport string) error {
+	return pathExistsImpl(devicePath, deviceTransport, os.Stat, filepath.Glob)
+}
+
+func pathExistsImpl(devicePath *string, deviceTransport string, osStat statFunc, filepathGlob globFunc) error {
+	if deviceTransport == "tcp" {
+		_, err := osStat(*devicePath)
+		if err != nil {
+			if !os.IsNotExist(err) {
 				debug.Printf("Error attempting to stat device: %s", err.Error())
-				return false, err
-			} else if err != nil {
-				debug.Printf("Device not found for: %s", *devicePath)
+				return err
 			}
-
-		} else {
-			fpath, _ := filepathGlob(*devicePath)
-			if fpath == nil {
-				err = os.ErrNotExist
-			} else {
-				// There might be a case that fpath contains multiple device paths if
-				// multiple PCI devices connect to same iSCSI target. We handle this
-				// case at subsequent logic. Pick up only first path here.
-				*devicePath = fpath[0]
-			}
+			debug.Printf("Device not found for: %s", *devicePath)
+			return err
 		}
-		if err == nil {
-			return true, nil
+	} else {
+		fpath, _ := filepathGlob(*devicePath)
+		if fpath == nil {
+			return os.ErrNotExist
 		}
-		if i == maxRetries-1 {
-			break
-		}
-		time.Sleep(time.Second * time.Duration(intervalSeconds))
+		// There might be a case that fpath contains multiple device paths if
+		// multiple PCI devices connect to same iscsi target. We handle this
+		// case at subsequent logic. Pick up only first path here.
+		*devicePath = fpath[0]
 	}
-	return false, err
+
+	return nil
 }
 
 // getMultipathDevice returns a multipath device for the configured targets if it exists
@@ -244,18 +255,12 @@ func getMultipathDevice(devices []Device) (*Device, error) {
 }
 
 // Connect attempts to connect a volume to this node using the provided Connector info
-func Connect(c *Connector) (string, error) {
-	var lastErr error
+func (c *Connector) Connect() (string, error) {
 	if c.RetryCount == 0 {
 		c.RetryCount = 10
 	}
 	if c.CheckInterval == 0 {
 		c.CheckInterval = 1
-	}
-
-	if c.RetryCount < 0 || c.CheckInterval < 0 {
-		return "", fmt.Errorf("invalid RetryCount and CheckInterval combination, both must be positive integers. "+
-			"RetryCount: %d, CheckInterval: %d", c.RetryCount, c.CheckInterval)
 	}
 
 	iFace := "default"
@@ -270,81 +275,23 @@ func Connect(c *Connector) (string, error) {
 	}
 	iscsiTransport := extractTransportName(out)
 
+	var lastErr error
 	var devicePaths []string
 	for _, target := range c.Targets {
-		debug.Printf("process targetIqn: %s, portal: %s\n", target.Iqn, target.Portal)
-		baseArgs := []string{"-m", "node", "-T", target.Iqn, "-p", target.Portal}
-		// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
-		// to avoid establishing additional sessions to the same target.
-		if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
-			debug.Printf("failed to rescan session, err: %v", err)
-		}
-
-		// create our devicePath that we'll be looking for based on the transport being used
-		port := defaultPort
-		if target.Port != "" {
-			port = target.Port
-		}
-		// portal with port
-		p := strings.Join([]string{target.Portal, port}, ":")
-		devicePath := strings.Join([]string{"/dev/disk/by-path/ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
-		if iscsiTransport != "tcp" {
-			devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", p, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
-		}
-
-		exists, _ := sessionExists(p, target.Iqn)
-		if exists {
-			if exists, err := waitForPathToExist(&devicePath, 1, 1, iscsiTransport); exists {
-				debug.Printf("Appending device path: %s", devicePath)
-				devicePaths = append(devicePaths, devicePath)
-				continue
-			} else if err != nil {
-				return "", err
-			}
-		}
-
-		if c.DoDiscovery {
-			// build discoverydb and discover iSCSI target
-			if err := Discoverydb(p, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
-				debug.Printf("Error in discovery of the target: %s\n", err.Error())
-				lastErr = err
-				continue
-			}
-		}
-
-		if c.DoCHAPDiscovery {
-			// Make sure we don't log the secrets
-			err := CreateDBEntry(target.Iqn, p, iFace, c.DiscoverySecrets, c.SessionSecrets)
-			if err != nil {
-				debug.Printf("Error creating db entry: %s\n", err.Error())
-				continue
-			}
-		}
-
-		// perform the login
-		err = Login(target.Iqn, p)
+		devicePath, err := c.connectTarget(&target, iFace, iscsiTransport)
 		if err != nil {
-			debug.Printf("failed to login, err: %v", err)
 			lastErr = err
-			continue
-		}
-		retries := int(c.RetryCount / c.CheckInterval)
-		if exists, err := waitForPathToExist(&devicePath, retries, int(c.CheckInterval), iscsiTransport); exists {
+		} else {
+			debug.Printf("Appending device path: %s", devicePath)
 			devicePaths = append(devicePaths, devicePath)
-			continue
-		} else if err != nil {
-			lastErr = fmt.Errorf("couldn't attach disk, err: %v", err)
 		}
 	}
 
 	// GetISCSIDevices returns all devices if no paths are given
 	if len(devicePaths) < 1 {
 		c.Devices = []Device{}
-	} else {
-		c.Devices, err = GetISCSIDevices(devicePaths)
-		if err != nil {
-			return "", err
-		}
+	} else if c.Devices, err = GetISCSIDevices(devicePaths); err != nil {
+		return "", err
 	}
 
 	if len(c.Devices) < 1 {
@@ -352,7 +299,7 @@ func Connect(c *Connector) (string, error) {
 		return "", fmt.Errorf("failed to find device path: %s, last error seen: %v", devicePaths, lastErr)
 	}
 
-	mountTargetDevice, err := getMountTargetDevice(c)
+	mountTargetDevice, err := c.getMountTargetDevice()
 	c.MountTargetDevice = mountTargetDevice
 	if err != nil {
 		debug.Printf("Connect failed: %v", err)
@@ -365,18 +312,95 @@ func Connect(c *Connector) (string, error) {
 	return c.MountTargetDevice.GetPath(), nil
 }
 
-//Disconnect performs a disconnect operation on a volume
-func Disconnect(tgtIqn string, portals []string) error {
-	err := Logout(tgtIqn, portals)
-	if err != nil {
-		return err
+func (c *Connector) connectTarget(target *TargetInfo, iFace string, iscsiTransport string) (string, error) {
+	debug.Printf("Process targetIqn: %s, portal: %s\n", target.Iqn, target.Portal)
+	baseArgs := []string{"-m", "node", "-T", target.Iqn, "-p", target.Portal}
+	// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
+	// to avoid establishing additional sessions to the same target.
+	if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
+		debug.Printf("Failed to rescan session, err: %v", err)
 	}
-	err = DeleteDBEntry(tgtIqn)
-	return err
+
+	// create our devicePath that we'll be looking for based on the transport being used
+	port := defaultPort
+	if target.Port != "" {
+		port = target.Port
+	}
+	// portal with port
+	portal := strings.Join([]string{target.Portal, port}, ":")
+	devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+	if iscsiTransport != "tcp" {
+		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", target.Iqn, "lun", fmt.Sprint(c.Lun)}, "-")
+	}
+
+	exists, _ := sessionExists(portal, target.Iqn)
+	if exists {
+		debug.Printf("Session already exists, checking if device path %q exists", devicePath)
+		if err := waitForPathToExist(&devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
+			return "", err
+		}
+		return devicePath, nil
+	}
+
+	if err := c.discoverTarget(target, iFace, portal); err != nil {
+		return "", err
+	}
+
+	// perform the login
+	err := Login(target.Iqn, portal)
+	if err != nil {
+		debug.Printf("Failed to login: %v", err)
+		return "", err
+	}
+
+	debug.Printf("Waiting for device path %q to exist", devicePath)
+	if err := waitForPathToExist(&devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
+		return "", err
+	}
+
+	return devicePath, nil
+}
+
+func (c *Connector) discoverTarget(target *TargetInfo, iFace string, portal string) error {
+	if c.DoDiscovery {
+		// build discoverydb and discover iscsi target
+		if err := Discoverydb(portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+			debug.Printf("Error in discovery of the target: %s\n", err.Error())
+			return err
+		}
+	}
+
+	if c.DoCHAPDiscovery {
+		// Make sure we don't log the secrets
+		err := CreateDBEntry(target.Iqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
+		if err != nil {
+			debug.Printf("Error creating db entry: %s\n", err.Error())
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Disconnect performs a disconnect operation from an appliance.
+// Be sure to disconnect all deivces properly before doing this as it can result in data loss.
+func (c *Connector) Disconnect() {
+	for _, target := range c.Targets {
+		Logout(target.Iqn, target.Portal)
+	}
+
+	deleted := map[string]bool{}
+	for _, target := range c.Targets {
+		if _, ok := deleted[target.Iqn]; ok {
+			continue
+		}
+		deleted[target.Iqn] = true
+		DeleteDBEntry(target.Iqn)
+	}
 }
 
 // DisconnectVolume removes a volume from a Linux host.
-func DisconnectVolume(c *Connector) error {
+func (c *Connector) DisconnectVolume() error {
 	// Steps to safely remove an iSCSI storage volume from a Linux host are as following:
 	// 1. Unmount the disk from a filesystem on the system.
 	// 2. Flush the multipath map for the disk we’re removing (if multipath is enabled).
@@ -387,13 +411,12 @@ func DisconnectVolume(c *Connector) error {
 	// DisconnectVolume focuses on step 2 and 3.
 	// Note: make sure the volume is already unmounted before calling this method.
 
-	if len(c.Devices) > 1 {
+	if c.IsMultipathEnabled() {
 		debug.Printf("Removing multipath device in path %s.\n", c.MountTargetDevice.GetPath())
 		err := FlushMultipathDevice(c.MountTargetDevice)
 		if err != nil {
 			return err
 		}
-
 		if err := RemoveSCSIDevices(c.Devices...); err != nil {
 			return err
 		}
@@ -413,8 +436,9 @@ func DisconnectVolume(c *Connector) error {
 	return nil
 }
 
-func getMountTargetDevice(c *Connector) (*Device, error) {
-	if len(c.Devices) > 1 {
+// getMountTargetDevice returns the device to be mounted among the configured devices
+func (c *Connector) getMountTargetDevice() (*Device, error) {
+	if c.IsMultipathEnabled() {
 		multipathDevice, err := getMultipathDevice(c.Devices)
 		if err != nil {
 			debug.Printf("mount target is not a multipath device: %v", err)
@@ -431,7 +455,12 @@ func getMountTargetDevice(c *Connector) (*Device, error) {
 	return &c.Devices[0], nil
 }
 
-// GetISCSIDevice get an iSCSI device from a device name
+// IsMultipathEnabled check if multipath is enabled on devices handled by this connector
+func (c *Connector) IsMultipathEnabled() bool {
+	return len(c.Devices) > 1
+}
+
+// GetISCSIDevice get an SCSI device from a device name
 func GetISCSIDevice(deviceName string) (*Device, error) {
 	iscsiDevices, err := GetISCSIDevices([]string{deviceName})
 	if err != nil {
@@ -551,8 +580,8 @@ func RemoveSCSIDevices(devices ...Device) error {
 	return nil
 }
 
-// PersistConnector persists the provided Connector to the specified file (ie /var/lib/pfile/myConnector.json)
-func PersistConnector(c *Connector, filePath string) error {
+// Persist persists the Connector to the specified file (ie /var/lib/pfile/myConnector.json)
+func (c *Connector) Persist(filePath string) error {
 	//file := path.Join("mnt", c.VolumeName+".json")
 	f, err := os.Create(filePath)
 	if err != nil {
