@@ -2,25 +2,20 @@ package iscsi
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
-	"encoding/json"
 )
-
-var sysBlockPath = "/sys/block"
-var sysScsiPath = "/sys/class/scsi_device"
-var devPath = "/dev"
 
 type multipathDeviceMap struct {
 	Map multipathMap `json:"map"`
 }
 
 type multipathMap struct {
-	Name string `json:"name"`
-	Uuid string `json:"uuid"`
-	Sysfs string `json:"sysfs"`
+	Name       string      `json:"name"`
+	UUID       string      `json:"uuid"`
+	Sysfs      string      `json:"sysfs"`
 	PathGroups []pathGroup `json:"path_groups"`
 }
 
@@ -32,6 +27,7 @@ type path struct {
 	Device string `json:"dev"`
 }
 
+// ExecWithTimeout execute a command with a timeout and returns an error if timeout is excedeed
 func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
 	debug.Printf("Executing command '%v' with args: '%v'.\n", command, args)
 
@@ -53,8 +49,6 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 		return nil, ctx.Err()
 	}
 
-	// If there's no context error, we know the command completed (or errored).
-	debug.Printf("Output from command: %s", string(out))
 	if err != nil {
 		debug.Printf("Non-zero exit code: %s\n", err)
 	}
@@ -64,7 +58,7 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 }
 
 func getMultipathMap(device string) (*multipathDeviceMap, error) {
-	debug.Printf("Getting multipath map for device %s.\n", device[1:])
+	debug.Printf("Getting multipath map for device %s.\n", device)
 
 	cmd := exec.Command("multipathd", "show", "map", device[1:], "json")
 	out, err := cmd.Output()
@@ -74,8 +68,11 @@ func getMultipathMap(device string) (*multipathDeviceMap, error) {
 		return nil, err
 	}
 
-	var deviceMap multipathDeviceMap;
-	json.Unmarshal(out, &deviceMap)
+	var deviceMap multipathDeviceMap
+	err = json.Unmarshal(out, &deviceMap)
+	if err != nil {
+		return nil, err
+	}
 	return &deviceMap, nil
 }
 
@@ -91,40 +88,23 @@ func (deviceMap *multipathDeviceMap) GetSlaves() []string {
 	return slaves
 }
 
-// GetScsiDevicesFromMultipathDevice gets all ScsiDevice for multipath device dm-x
-func GetScsiDevicesFromMultipathDevice(device string) ([]string, error) {
-	debug.Printf("Getting all slaves for multipath device %s.\n", device)
-
-	deviceMap, err := getMultipathMap(device)
-
-	if err != nil {
-		debug.Printf("An error occured while looking for slaves: %v\n", err)
-		return nil, err
-	}
-
-	slaves := deviceMap.GetSlaves()
-
-	debug.Printf("Found slaves: %v.\n", slaves)
-	return slaves, nil
-}
-
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
-func FlushMultipathDevice(device string) error {
-	debug.Printf("Flushing multipath device '%v'.\n", device)
+func FlushMultipathDevice(device *Device) error {
+	devicePath := device.GetPath()
+	debug.Printf("Flushing multipath device '%v'.\n", devicePath)
 
-	fullDevice := filepath.Join(devPath, device)
 	timeout := 5 * time.Second
-	_, err := execWithTimeout("multipath", []string{"-f", fullDevice}, timeout)
+	_, err := execWithTimeout("multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
-		if _, e := os.Stat(fullDevice); os.IsNotExist(e) {
-			debug.Printf("Multipath device %v was deleted.\n", device)
+		if _, e := os.Stat(devicePath); os.IsNotExist(e) {
+			debug.Printf("Multipath device %v has been removed.\n", devicePath)
 		} else {
-			debug.Printf("Command 'multipath -f %v' did not succeed to delete the device: %v\n", fullDevice, err)
+			debug.Printf("Command 'multipath -f %v' did not succeed to delete the device: %v\n", devicePath, err)
 			return err
 		}
 	}
 
-	debug.Printf("Finshed flushing multipath device %v.\n", device)
+	debug.Printf("Finshed flushing multipath device %v.\n", devicePath)
 	return nil
 }

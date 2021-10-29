@@ -89,6 +89,7 @@ var testExecWithTimeoutError error
 var mockedExitStatus = 0
 var mockedStdout string
 
+var sysBlockPath = "/sys/block"
 var normalDevice = "sda"
 var multipathDevice = "dm-1"
 var slaves = []string{"sdb", "sdc"}
