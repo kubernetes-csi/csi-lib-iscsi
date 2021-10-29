@@ -586,6 +586,58 @@ func Test_getMultipathDevice(t *testing.T) {
 	}
 }
 
+func Test_lsblk(t *testing.T) {
+	sda := Device{Name: "sda", Children: []Device{{}}}
+
+	tests := map[string]struct {
+		devicePaths      []string
+		mockedStdout     string
+		mockedDevices    []Device
+		mockedExitStatus int
+		wantErr          bool
+	}{
+		"Basic": {
+			devicePaths:   []string{"/dev/sda"},
+			mockedDevices: []Device{sda},
+		},
+		"NotABlockDevice": {
+			devicePaths:      []string{"/dev/sdzz"},
+			mockedStdout:     "lsblk: sdzz: not a block device",
+			mockedExitStatus: 32,
+		},
+		"InvalidJson": {
+			mockedStdout:     "{",
+			mockedExitStatus: 0,
+			wantErr:          true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			mockedStdout := tt.mockedStdout
+			if mockedStdout == "" {
+				out, err := json.Marshal(deviceInfo{BlockDevices: tt.mockedDevices})
+				assert.Nil(err, "could not setup test")
+				mockedStdout = string(out)
+			}
+
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, mockedStdout)).Reset()
+			deviceInfo, err := lsblk(tt.devicePaths)
+
+			if tt.mockedExitStatus != 0 || tt.wantErr {
+				assert.Nil(deviceInfo)
+				assert.NotNil(err)
+			} else {
+				assert.NotNil(deviceInfo)
+				assert.Equal(tt.mockedDevices, deviceInfo.BlockDevices)
+				assert.Nil(err)
+			}
+		})
+	}
+}
+
 func TestConnectorPersistance(t *testing.T) {
 	assert := assert.New(t)
 
@@ -600,9 +652,6 @@ func TestConnectorPersistance(t *testing.T) {
 		Name:      "child name",
 		Hctl:      "child hctl",
 		Type:      "child type",
-		Vendor:    "child vendor",
-		Model:     "child model",
-		Revision:  "child revision",
 		Transport: "child transport",
 	}
 	device := Device{
@@ -610,9 +659,6 @@ func TestConnectorPersistance(t *testing.T) {
 		Hctl:      "device hctl",
 		Children:  []Device{childDevice},
 		Type:      "device type",
-		Vendor:    "device vendor",
-		Model:     "device model",
-		Revision:  "device revision",
 		Transport: "device transport",
 	}
 	c := Connector{
@@ -624,12 +670,24 @@ func TestConnectorPersistance(t *testing.T) {
 		SessionSecrets:    secret,
 		Interface:         "fake interface",
 		MountTargetDevice: &device,
-		Devices:           []Device{device, childDevice},
+		Devices:           []Device{childDevice},
 		RetryCount:        24,
 		CheckInterval:     13,
 		DoDiscovery:       true,
 		DoCHAPDiscovery:   true,
 	}
+
+	defer gostub.Stub(&execCommand, func(cmd string, args ...string) *exec.Cmd {
+		mockedDevice := device
+		if args[3] == "/dev/child name" {
+			mockedDevice = childDevice
+		}
+
+		mockedOutput, err := json.Marshal(deviceInfo{BlockDevices: []Device{mockedDevice}})
+		assert.Nil(err, "could not setup test")
+
+		return makeFakeExecCommand(0, string(mockedOutput))(cmd, args...)
+	}).Reset()
 
 	c.Persist("/tmp/connector.json")
 	c2, err := GetConnectorFromFile("/tmp/connector.json")

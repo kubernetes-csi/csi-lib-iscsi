@@ -56,10 +56,8 @@ type Device struct {
 	Hctl      string   `json:"hctl"`
 	Children  []Device `json:"children"`
 	Type      string   `json:"type"`
-	Vendor    string   `json:"vendor"`
-	Model     string   `json:"model"`
-	Revision  string   `json:"rev"`
 	Transport string   `json:"tran"`
+	Size      string   `json:"size,omitempty"`
 }
 
 // Connector provides a struct to hold all of the needed parameters to make our iSCSI connection
@@ -216,17 +214,8 @@ func pathExists(devicePath *string, deviceTransport string) error {
 // getMultipathDevice returns a multipath device for the configured targets if it exists
 func getMultipathDevice(devices []Device) (*Device, error) {
 	var multipathDevice *Device
-	var devicePaths []string
 
 	for _, device := range devices {
-		devicePaths = append(devicePaths, device.GetPath())
-	}
-	deviceInfo, err := lsblk("", devicePaths)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, device := range deviceInfo.BlockDevices {
 		if len(device.Children) != 1 {
 			return nil, fmt.Errorf("device is not mapped to exactly one multipath device: %v", device.Children)
 		}
@@ -454,7 +443,7 @@ func (c *Connector) IsMultipathEnabled() bool {
 func GetSCSIDevices(devicePaths []string) ([]Device, error) {
 	debug.Printf("Getting info about SCSI devices %s.\n", devicePaths)
 
-	deviceInfo, err := lsblk("-S", devicePaths)
+	deviceInfo, err := lsblk(devicePaths)
 	if err != nil {
 		debug.Printf("An error occured while looking info about SCSI devices: %v", err)
 		return nil, err
@@ -482,24 +471,19 @@ func GetISCSIDevices(devicePaths []string) (devices []Device, err error) {
 }
 
 // lsblk execute the lsblk commands
-func lsblkRaw(flags string, devicePaths []string) ([]byte, error) {
-	out, err := execCommand("lsblk", append([]string{flags}, devicePaths...)...).CombinedOutput()
-	debug.Printf("lsblk %s %s", flags, strings.Join(devicePaths, " "))
+func lsblk(devicePaths []string) (*deviceInfo, error) {
+	flags := []string{"-J", "-o", "NAME,HCTL,TYPE,TRAN,SIZE"}
+	command := execCommand("lsblk", append(flags, devicePaths...)...)
+	debug.Println(command.String())
+	out, err := command.Output()
 	if err != nil {
-		return nil, fmt.Errorf("lsblk: %s", string(out))
-	}
-
-	return out, nil
-}
-
-func lsblk(flags string, devicePaths []string) (*deviceInfo, error) {
-	var deviceInfo deviceInfo
-
-	out, err := lsblkRaw("-J "+flags, devicePaths)
-	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("%s, (%v)", strings.Trim(string(ee.Stderr), "\n"), ee)
+		}
 		return nil, err
 	}
 
+	var deviceInfo deviceInfo
 	if err = json.Unmarshal(out, &deviceInfo); err != nil {
 		return nil, err
 	}
@@ -589,16 +573,30 @@ func (c *Connector) Persist(filePath string) error {
 func GetConnectorFromFile(filePath string) (*Connector, error) {
 	f, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		return &Connector{}, err
-
+		return nil, err
 	}
-	data := Connector{}
-	err = json.Unmarshal(f, &data)
+	c := Connector{}
+	err = json.Unmarshal([]byte(f), &c)
 	if err != nil {
-		return &Connector{}, err
+		return nil, err
 	}
 
-	return &data, nil
+	devicePaths := []string{}
+	for _, device := range c.Devices {
+		devicePaths = append(devicePaths, device.GetPath())
+	}
+
+	if devices, err := GetSCSIDevices([]string{c.MountTargetDevice.GetPath()}); err != nil {
+		return nil, err
+	} else {
+		c.MountTargetDevice = &devices[0]
+	}
+
+	if c.Devices, err = GetSCSIDevices(devicePaths); err != nil {
+		return nil, err
+	}
+
+	return &c, nil
 }
 
 // Exists check if the device exists at its path and returns an error otherwise
