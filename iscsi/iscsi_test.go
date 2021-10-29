@@ -3,6 +3,7 @@ package iscsi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -117,12 +118,12 @@ func makeFakeExecCommandContext(exitStatus int, stdout string) func(context.Cont
 	}
 }
 
-func makeFakeExecWithTimeout(testCmdTimeout bool, testExecWithTimeoutError error) func(string, []string, time.Duration) ([]byte, error) {
+func makeFakeExecWithTimeout(withTimeout bool, output []byte, err error) func(string, []string, time.Duration) ([]byte, error) {
 	return func(command string, args []string, timeout time.Duration) ([]byte, error) {
-		if testCmdTimeout {
+		if withTimeout {
 			return nil, context.DeadlineExceeded
 		}
-		return []byte(""), testExecWithTimeoutError
+		return output, err
 	}
 }
 
@@ -332,7 +333,6 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 }
 
 func Test_DisconnectMultipathVolume(t *testing.T) {
-	defer gostub.Stub(&execCommand, makeFakeExecCommand(0, "")).Reset()
 	defer gostub.Stub(&osStat, func(name string) (os.FileInfo, error) {
 		return nil, nil
 	}).Reset()
@@ -342,24 +342,33 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 		timeout        bool
 		withDeviceFile bool
 		wantErr        bool
-		cmdError       error
 	}{
-		{"DisconnectMultipathVolume", false, true, false, nil},
-		{"DisconnectMultipathVolumeFlushTimeout", true, true, true, nil},
-		{"DisconnectNonexistentMultipathVolume", false, false, false, nil},
+		{"DisconnectMultipathVolume", false, true, false},
+		{"DisconnectMultipathVolumeFlushTimeout", true, true, true},
+		{"DisconnectNonexistentMultipathVolume", false, false, false},
 	}
+
+	wwid := "3600c0ff0000000000000000000000000"
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(tt.timeout, tt.cmdError)).Reset()
+			defer gostub.Stub(&execWithTimeout, func(cmd string, args []string, timeout time.Duration) ([]byte, error) {
+				mockedOutput := []byte("")
+				if cmd == "scsi_id" {
+					mockedOutput = []byte(wwid + "\n")
+				}
+				return makeFakeExecWithTimeout(tt.timeout, mockedOutput, nil)(cmd, args, timeout)
+			}).Reset()
 			c := Connector{
-				Devices:           []Device{{Hctl: "hctl1"}, {Hctl: "hctl2"}},
-				MountTargetDevice: &Device{Type: "mpath"},
+				Devices:           []Device{{Hctl: "0:0:0:0"}, {Hctl: "1:0:0:0"}},
+				MountTargetDevice: &Device{Name: wwid, Type: "mpath"},
 			}
 
 			defer gostub.Stub(&osOpenFile, func(name string, flag int, perm os.FileMode) (*os.File, error) {
 				return os.OpenFile(testRootFS+name, flag, perm)
 			}).Reset()
+
+			defer gostub.Stub(&execCommand, makeFakeExecCommand(0, wwid)).Reset()
 
 			if tt.withDeviceFile {
 				if err := preparePaths(c.Devices); err != nil {
@@ -377,10 +386,7 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 			}
 
 			if tt.timeout {
-				if err != context.DeadlineExceeded {
-					t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, context.DeadlineExceeded)
-					return
-				}
+				assert.New(t).Contains(err.Error(), "context deadline exceeded")
 			}
 
 			if tt.withDeviceFile && !tt.wantErr {
@@ -534,30 +540,24 @@ func Test_getMultipathDevice(t *testing.T) {
 	sde := Device{Name: "sdc", Children: []Device{mpath1, mpath2}}
 
 	tests := map[string]struct {
-		mockedDevices    deviceInfo
-		mockedStdout     string
-		mockedExitStatus int
-		multipathDevice  *Device
-		wantErr          bool
+		mockedDevices   []Device
+		multipathDevice *Device
+		wantErr         bool
 	}{
 		"Basic": {
-			mockedDevices:   deviceInfo{BlockDevices: []Device{sdb, sdc}},
+			mockedDevices:   []Device{sdb, sdc},
 			multipathDevice: &mpath1,
 		},
-		"NotABlockDevice": {
-			mockedStdout:     "lsblk: sdzz: not a block device",
-			mockedExitStatus: 32,
-		},
 		"NotSharingTheSameMultipathDevice": {
-			mockedDevices: deviceInfo{BlockDevices: []Device{sdb, sdd}},
+			mockedDevices: []Device{sdb, sdd},
 			wantErr:       true,
 		},
 		"MoreThanOneMultipathDevice": {
-			mockedDevices: deviceInfo{BlockDevices: []Device{sde}},
+			mockedDevices: []Device{sde},
 			wantErr:       true,
 		},
 		"NotAMultipathDevice": {
-			mockedDevices: deviceInfo{BlockDevices: []Device{sda}},
+			mockedDevices: []Device{sda},
 			wantErr:       true,
 		},
 	}
@@ -565,17 +565,9 @@ func Test_getMultipathDevice(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			mockedStdout := tt.mockedStdout
-			if mockedStdout == "" {
-				out, err := json.Marshal(tt.mockedDevices)
-				assert.Nil(err, "could not setup test")
-				mockedStdout = string(out)
-			}
+			multipathDevice, err := getMultipathDevice(tt.mockedDevices)
 
-			gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, string(mockedStdout)))
-			multipathDevice, err := getMultipathDevice(tt.mockedDevices.BlockDevices)
-
-			if tt.mockedExitStatus != 0 || tt.wantErr {
+			if tt.wantErr {
 				assert.Nil(multipathDevice)
 				assert.NotNil(err)
 			} else {
@@ -676,6 +668,20 @@ func TestConnectorPersistance(t *testing.T) {
 		DoDiscovery:       true,
 		DoCHAPDiscovery:   true,
 	}
+	devicesByPath := map[string]*Device{}
+	devicesByPath[childDevice.GetPath()] = &childDevice
+	devicesByPath[device.GetPath()] = &device
+
+	defer gostub.Stub(&execCommand, func(name string, arg ...string) *exec.Cmd {
+		blockDevices := []Device{}
+		for _, path := range arg[3:] {
+			blockDevices = append(blockDevices, *devicesByPath[path])
+		}
+
+		out, err := json.Marshal(deviceInfo{BlockDevices: blockDevices})
+		assert.Nil(err, "could not setup test")
+		return makeFakeExecCommand(0, string(out))(name, arg...)
+	}).Reset()
 
 	defer gostub.Stub(&execCommand, func(cmd string, args ...string) *exec.Cmd {
 		mockedDevice := device
@@ -706,4 +712,117 @@ func TestConnectorPersistance(t *testing.T) {
 	_, err = GetConnectorFromFile("/tmp/connector.json")
 	assert.NotNil(err)
 	assert.IsType(&json.SyntaxError{}, err)
+}
+
+func Test_IsMultipathConsistent(t *testing.T) {
+	mpath1 := Device{Name: "3600c0ff0000000000000000000000000", Type: "mpath", Size: "10G", Hctl: "0:0:0:1"}
+	mpath2 := Device{Name: "3600c0ff0000000000000000000000042", Type: "mpath", Size: "5G", Hctl: "0:0:0:2"}
+	sda := Device{Name: "sda", Size: "10G", Hctl: "1:0:0:1"}
+	sdb := Device{Name: "sdb", Size: "10G", Hctl: "2:0:0:1"}
+	sdc := Device{Name: "sdc", Size: "5G", Hctl: "1:0:0:2"}
+	sdd := Device{Name: "sdd", Size: "5G", Hctl: "2:0:0:2"}
+	invalidHCTL := Device{Name: "sde", Size: "5G", Hctl: "2:b"}
+	sdf := Device{Name: "sdf", Size: "10G", Hctl: "2:0:0:3"}
+	sdg := Device{Name: "sdg", Size: "10G", Hctl: "1:0:0:1"}
+	devicesWWIDs := map[string]string{}
+	devicesWWIDs[mpath1.GetPath()] = "3600c0ff0000000000000000000000000"
+	devicesWWIDs[sda.GetPath()] = "3600c0ff0000000000000000000000000"
+	devicesWWIDs[sdb.GetPath()] = "3600c0ff0000000000000000000000000"
+	devicesWWIDs[sdg.GetPath()] = "3600c0ff0000000000000000000000024"
+
+	tests := map[string]struct {
+		connector   *Connector
+		wantErr     bool
+		errContains string
+	}{
+		"Basic": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sda, sdb},
+			},
+		},
+		"Different sizes 1": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sda, sdc},
+			},
+			wantErr:     true,
+			errContains: "size differ",
+		},
+		"Different sizes 2": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sdc, sdd},
+			},
+			wantErr:     true,
+			errContains: "size differ",
+		},
+		"Invalid HCTL": {
+			connector: &Connector{
+				MountTargetDevice: &invalidHCTL,
+				Devices:           []Device{},
+			},
+			wantErr:     true,
+			errContains: "invalid HCTL",
+		},
+		"LUNs differs": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sda, sdf},
+			},
+			wantErr:     true,
+			errContains: "LUNs differ",
+		},
+		"Same controller": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sda, sdg},
+			},
+			wantErr:     true,
+			errContains: "same controller",
+		},
+		"Missing WWID": {
+			connector: &Connector{
+				MountTargetDevice: &mpath2,
+				Devices:           []Device{sdc, sdd},
+			},
+			wantErr:     true,
+			errContains: "could not find WWID",
+		},
+		"WWIDs differ": {
+			connector: &Connector{
+				MountTargetDevice: &mpath1,
+				Devices:           []Device{sdb, sdg},
+			},
+			wantErr:     true,
+			errContains: "WWIDs differ",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			c := tt.connector
+
+			defer gostub.Stub(&execWithTimeout, func(_ string, args []string, _ time.Duration) ([]byte, error) {
+				devicePath := args[len(args)-1]
+				wwid, ok := devicesWWIDs[devicePath]
+				if !ok {
+					return []byte(""), errors.New("")
+				}
+				return []byte(wwid + "\n"), nil
+			}).Reset()
+
+			err := c.IsMultipathConsistent()
+
+			if tt.wantErr {
+				assert.Error(err)
+				if tt.errContains != "" {
+					assert.Contains(err.Error(), tt.errContains)
+				}
+			} else {
+				assert.Nil(err)
+			}
+		})
+	}
 }

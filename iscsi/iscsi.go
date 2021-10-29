@@ -60,6 +60,13 @@ type Device struct {
 	Size      string   `json:"size,omitempty"`
 }
 
+type HCTL struct {
+	HBA     int
+	Channel int
+	Target  int
+	LUN     int
+}
+
 // Connector provides a struct to hold all of the needed parameters to make our iSCSI connection
 type Connector struct {
 	VolumeName       string       `json:"volume_name"`
@@ -291,6 +298,12 @@ func (c *Connector) Connect() (string, error) {
 		return "", err
 	}
 
+	if c.IsMultipathEnabled() {
+		if err := c.IsMultipathConsistent(); err != nil {
+			return "", fmt.Errorf("multipath is inconsistent: %v", err)
+		}
+	}
+
 	return c.MountTargetDevice.GetPath(), nil
 }
 
@@ -394,6 +407,10 @@ func (c *Connector) DisconnectVolume() error {
 	// Note: make sure the volume is already unmounted before calling this method.
 
 	if c.IsMultipathEnabled() {
+		if err := c.IsMultipathConsistent(); err != nil {
+			return fmt.Errorf("multipath is inconsistent: %v", err)
+		}
+
 		debug.Printf("Removing multipath device in path %s.\n", c.MountTargetDevice.GetPath())
 		err := FlushMultipathDevice(c.MountTargetDevice)
 		if err != nil {
@@ -599,6 +616,52 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 	return &c, nil
 }
 
+// IsMultipathConsistent check if the currently used device is using a consistent multipath mapping
+func (c *Connector) IsMultipathConsistent() error {
+	devices := append([]Device{*c.MountTargetDevice}, c.Devices...)
+
+	referenceLUN := struct {
+		LUN  int
+		Name string
+	}{LUN: -1, Name: ""}
+	HBA := map[int]string{}
+	referenceDevice := devices[0]
+	for _, device := range devices {
+		if device.Size != referenceDevice.Size {
+			return fmt.Errorf("devices size differ: %s (%s) != %s (%s)", device.Name, device.Size, referenceDevice.Name, referenceDevice.Size)
+		}
+
+		if device.Type != "mpath" {
+			hctl, err := device.HCTL()
+			if err != nil {
+				return err
+			}
+			if referenceLUN.LUN == -1 {
+				referenceLUN.LUN = hctl.LUN
+				referenceLUN.Name = device.Name
+			} else if hctl.LUN != referenceLUN.LUN {
+				return fmt.Errorf("devices LUNs differ: %s (%d) != %s (%d)", device.Name, hctl.LUN, referenceLUN.Name, referenceLUN.LUN)
+			}
+
+			if name, ok := HBA[hctl.HBA]; !ok {
+				HBA[hctl.HBA] = device.Name
+			} else {
+				return fmt.Errorf("two devices are using the same controller (%d): %s and %s", hctl.HBA, device.Name, name)
+			}
+		}
+
+		wwid, err := device.WWID()
+		if err != nil {
+			return fmt.Errorf("could not find WWID for device %s: %v", device.Name, err)
+		}
+		if wwid != referenceDevice.Name {
+			return fmt.Errorf("devices WWIDs differ: %s (wwid:%s) != %s (wwid:%s)", device.Name, wwid, referenceDevice.Name, referenceDevice.Name)
+		}
+	}
+
+	return nil
+}
+
 // Exists check if the device exists at its path and returns an error otherwise
 func (d *Device) Exists() error {
 	_, err := osStat(d.GetPath())
@@ -612,6 +675,42 @@ func (d *Device) GetPath() string {
 	}
 
 	return filepath.Join("/dev", d.Name)
+}
+
+// WWID returns the WWID of a device
+func (d *Device) WWID() (string, error) {
+	timeout := 1 * time.Second
+	out, err := execWithTimeout("scsi_id", []string{"-g", "-u", d.GetPath()}, timeout)
+	if err != nil {
+		return "", err
+	}
+
+	return string(out[:len(out)-1]), nil
+}
+
+// HCTL returns the HCTL of a device
+func (d *Device) HCTL() (*HCTL, error) {
+	var hctl []int
+
+	for _, idstr := range strings.Split(d.Hctl, ":") {
+		id, err := strconv.Atoi(idstr)
+		if err != nil {
+			hctl = []int{}
+			break
+		}
+		hctl = append(hctl, id)
+	}
+
+	if len(hctl) != 4 {
+		return nil, fmt.Errorf("invalid HCTL (%s) for device %q", d.Hctl, d.Name)
+	}
+
+	return &HCTL{
+		HBA:     hctl[0],
+		Channel: hctl[1],
+		Target:  hctl[2],
+		LUN:     hctl[3],
+	}, nil
 }
 
 // WriteDeviceFile write in a device file
