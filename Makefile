@@ -1,4 +1,4 @@
-.PHONY: all build clean install
+.PHONY: all build clean install test coverage
 
 all: clean build install
 
@@ -16,3 +16,6 @@ install:
 test:
 	go test ./iscsi/
 
+coverage:
+	go test ./iscsi -coverprofile=coverage.out
+	go tool cover -html=coverage.out
