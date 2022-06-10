@@ -17,20 +17,19 @@ golang libs.  This may prove to not be ideal, and may be changed over time, but 
 
 ## Logging and Debug
 
-By default the library does not provide any logging, but provides an error message that includes any messages from
-iscsiadm as well as exit-codes.  In the event that you need to debug the library, we provide a function:
+By default the library uses klog and structured logging to produce InfoS and ErrorS log entries. A caller can replace
+the default io.Writer with their own by using the provided function:
 
 ```
 func EnableDebugLogging(writer io.Writer)
 ```
 
-This will turn on verbose logging directed to the provided io.Writer and include the response of every iscsiadm command
-issued.
+This direct logging to the provided io.Writer and include the response of every iscsiadm command issued.
 
 ## Intended Usage
 
-Curently the intended usage of this library is simply to provide a golang package to standardize how plugins are implementing
-iscsi connect and disconnect.  It's not intended to be  a "service", although that's a possible next step.  It's currenty been
+Currently the intended usage of this library is simply to provide a golang package to standardize how plugins are implementing
+iscsi connect and disconnect.  It's not intended to be  a "service", although that's a possible next step.  It's currently been
 used for plugins where iscsid is installed in containers only, as well as designs where it uses the nodes iscsid.  Each of these
 approaches has their own pros and cons.  Currently, it's up to the plugin author to determine which model suits them best
 and to deploy their node plugin appropriately.

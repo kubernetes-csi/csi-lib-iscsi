@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 // ExecWithTimeout execute a command with a timeout and returns an error if timeout is excedeed
 func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
-	debug.Printf("Executing command '%v' with args: '%v'.\n", command, args)
+	klog.InfoS("Executing command with timeout", "command", command, "args", args)
 
 	// Create a new context and add a timeout to it
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -23,55 +25,56 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 
 	// This time we can simply use Output() to get the result.
 	out, err := cmd.Output()
-	debug.Println(err)
+	if err != nil {
+		klog.ErrorS(err, "Command error", "command", command, "timeout", timeout, "output", out)
+	}
 
 	// We want to check the context error to see if the timeout was executed.
 	// The error returned by cmd.Output() will be OS specific based on what
 	// happens when a process is killed.
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		debug.Printf("Command '%s' timeout reached.\n", command)
+		klog.InfoS("Command timeout reached", "command", command, "timeout", timeout)
 		return nil, ctx.Err()
 	}
 
 	if err != nil {
 		var ee *exec.ExitError
 		if ok := errors.Is(err, ee); ok {
-			debug.Printf("Non-zero exit code: %s\n", err)
+			klog.ErrorS(err, "Non-zero exit code", "command", command)
 			err = fmt.Errorf("%s", ee.Stderr)
 		}
 	}
 
-	debug.Println("Finished executing command.")
 	return out, err
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
 func FlushMultipathDevice(device *Device) error {
 	devicePath := device.GetPath()
-	debug.Printf("Flushing multipath device '%v'.\n", devicePath)
+	klog.InfoS("Flushing multipath device", "device", devicePath)
 
 	timeout := 5 * time.Second
 	_, err := execWithTimeout("multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
 		if _, e := osStat(devicePath); os.IsNotExist(e) {
-			debug.Printf("Multipath device %v has been removed.\n", devicePath)
+			klog.InfoS("Multipath device has been removed", "device", devicePath)
 		} else {
 			if strings.Contains(err.Error(), "map in use") {
 				err = fmt.Errorf("device is probably still in use somewhere else: %v", err)
 			}
-			debug.Printf("Command 'multipath -f %v' did not succeed to delete the device: %v\n", devicePath, err)
+			klog.ErrorS(err, "Command 'multipath -f <device>' did not succeed to delete the device", "device", devicePath)
 			return err
 		}
 	}
 
-	debug.Printf("Finshed flushing multipath device %v.\n", devicePath)
+	klog.InfoS("Finished flushing multipath device", "device", devicePath)
 	return nil
 }
 
 // ResizeMultipathDevice resize a multipath device based on its underlying devices
 func ResizeMultipathDevice(device *Device) error {
-	debug.Printf("Resizing multipath device %s\n", device.GetPath())
+	klog.InfoS("Resizing multipath device", "device", device.GetPath())
 
 	if output, err := execCommand("multipathd", "resize", "map", device.Name).CombinedOutput(); err != nil {
 		return fmt.Errorf("could not resize multipath device: %s (%v)", output, err)
