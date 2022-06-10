@@ -17,6 +17,7 @@ import (
 
 	"github.com/prashantv/gostub"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/klog/v2"
 )
 
 type testWriter struct {
@@ -426,7 +427,7 @@ func Test_EnableDebugLogging(t *testing.T) {
 	assert.Equal("", string(data))
 	assert.Len(strings.Split(string(data), "\n"), 1)
 
-	debug.Print("testing debug logs")
+	klog.InfoS("testing debug logs")
 	assert.Contains(string(data), "testing debug logs")
 	assert.Len(strings.Split(string(data), "\n"), 2)
 }
