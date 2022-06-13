@@ -3,7 +3,6 @@ module github.com/kubernetes-csi/csi-lib-iscsi
 go 1.18
 
 require (
-	github.com/kubernetes-csi/csi-lib-iscsi v0.0.0-20220106022228-366f3190694e
 	github.com/prashantv/gostub v1.0.0
 	github.com/stretchr/testify v1.7.0
 	k8s.io/klog/v2 v2.60.1

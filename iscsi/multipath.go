@@ -13,8 +13,9 @@ import (
 )
 
 // ExecWithTimeout execute a command with a timeout and returns an error if timeout is excedeed
-func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
-	klog.InfoS("Executing command with timeout", "command", command, "args", args)
+func ExecWithTimeout(ctx context.Context, command string, args []string, timeout time.Duration) ([]byte, error) {
+	logger := klog.FromContext(ctx)
+	logger.V(1).Info("Executing command with timeout", "command", command, "args", args)
 
 	// Create a new context and add a timeout to it
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -33,7 +34,7 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 	// The error returned by cmd.Output() will be OS specific based on what
 	// happens when a process is killed.
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		klog.InfoS("Command timeout reached", "command", command, "timeout", timeout)
+		logger.V(1).Info("Command timeout reached", "command", command, "timeout", timeout)
 		return nil, ctx.Err()
 	}
 
@@ -49,16 +50,17 @@ func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]by
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
-func FlushMultipathDevice(device *Device) error {
+func FlushMultipathDevice(ctx context.Context, device *Device) error {
 	devicePath := device.GetPath()
-	klog.InfoS("Flushing multipath device", "device", devicePath)
+	logger := klog.FromContext(ctx)
+	logger.V(1).Info("Flushing multipath device", "device", devicePath)
 
 	timeout := 5 * time.Second
-	_, err := execWithTimeout("multipath", []string{"-f", devicePath}, timeout)
+	_, err := execWithTimeout(ctx, "multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
 		if _, e := osStat(devicePath); os.IsNotExist(e) {
-			klog.InfoS("Multipath device has been removed", "device", devicePath)
+			logger.V(1).Info("Multipath device has been removed", "device", devicePath)
 		} else {
 			if strings.Contains(err.Error(), "map in use") {
 				err = fmt.Errorf("device is probably still in use somewhere else: %v", err)
@@ -68,13 +70,14 @@ func FlushMultipathDevice(device *Device) error {
 		}
 	}
 
-	klog.InfoS("Finished flushing multipath device", "device", devicePath)
+	logger.V(1).Info("Finished flushing multipath device", "device", devicePath)
 	return nil
 }
 
 // ResizeMultipathDevice resize a multipath device based on its underlying devices
-func ResizeMultipathDevice(device *Device) error {
-	klog.InfoS("Resizing multipath device", "device", device.GetPath())
+func ResizeMultipathDevice(ctx context.Context, device *Device) error {
+	logger := klog.FromContext(ctx)
+	logger.V(1).Info("Resizing multipath device", "device", device.GetPath())
 
 	if output, err := execCommand("multipathd", "resize", "map", device.Name).CombinedOutput(); err != nil {
 		return fmt.Errorf("could not resize multipath device: %s (%v)", output, err)
