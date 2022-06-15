@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/klog/v2"
 )
 
@@ -110,8 +111,8 @@ func parseSessions(lines string) []iscsiSession {
 }
 
 // sessionExists checks if an iSCSI session exists
-func sessionExists(ctx context.Context, tgtPortal, tgtIQN string) (bool, error) {
-	sessions, err := getCurrentSessions(ctx)
+func sessionExists(logger *logr.Logger, tgtPortal, tgtIQN string) (bool, error) {
+	sessions, err := getCurrentSessions(logger)
 	if err != nil {
 		return false, err
 	}
@@ -136,8 +137,8 @@ func extractTransportName(output string) string {
 }
 
 // getCurrentSessions list current iSCSI sessions
-func getCurrentSessions(ctx context.Context) ([]iscsiSession, error) {
-	out, err := GetSessions(ctx)
+func getCurrentSessions(logger *logr.Logger) ([]iscsiSession, error) {
+	out, err := GetSessions(logger)
 	if err != nil {
 		exitErr, ok := err.(*exec.ExitError)
 		if ok && exitErr.ProcessState.Sys().(syscall.WaitStatus).ExitStatus() == 21 {
@@ -150,8 +151,7 @@ func getCurrentSessions(ctx context.Context) ([]iscsiSession, error) {
 }
 
 // waitForPathToExist wait for a file at a path to exists on disk
-func waitForPathToExist(ctx context.Context, devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string) error {
-	logger := klog.FromContext(ctx)
+func waitForPathToExist(logger *logr.Logger, devicePath *string, maxRetries, intervalSeconds uint, deviceTransport string) error {
 	if devicePath == nil || *devicePath == "" {
 		return fmt.Errorf("unable to check unspecified devicePath")
 	}
@@ -162,7 +162,7 @@ func waitForPathToExist(ctx context.Context, devicePath *string, maxRetries, int
 			sleep(time.Second * time.Duration(intervalSeconds))
 		}
 
-		if err := pathExists(ctx, devicePath, deviceTransport); err == nil {
+		if err := pathExists(logger, devicePath, deviceTransport); err == nil {
 			return nil
 		} else if !os.IsNotExist(err) {
 			return err
@@ -173,8 +173,7 @@ func waitForPathToExist(ctx context.Context, devicePath *string, maxRetries, int
 }
 
 // pathExists checks if a file at a path exists on disk
-func pathExists(ctx context.Context, devicePath *string, deviceTransport string) error {
-	logger := klog.FromContext(ctx)
+func pathExists(logger *logr.Logger, devicePath *string, deviceTransport string) error {
 	if deviceTransport == "tcp" {
 		_, err := osStat(*devicePath)
 		if err != nil {
@@ -204,8 +203,7 @@ func pathExists(ctx context.Context, devicePath *string, deviceTransport string)
 }
 
 // getMultipathDevice returns a multipath device for the configured targets if it exists
-func getMultipathDevice(ctx context.Context, devices []Device) (*Device, error) {
-	logger := klog.FromContext(ctx)
+func getMultipathDevice(logger *logr.Logger, devices []Device) (*Device, error) {
 	var multipathDevice *Device
 
 	// This routine relies on output from lsblk, and older versions did not produce the desired outcome
@@ -257,7 +255,7 @@ func (c *Connector) Connect(ctx context.Context) (string, error) {
 	}
 
 	// make sure our iface exists and extract the transport type
-	out, err := ShowInterface(ctx, iFace)
+	out, err := ShowInterface(&logger, iFace)
 	if err != nil {
 		return "", err
 	}
@@ -266,7 +264,7 @@ func (c *Connector) Connect(ctx context.Context) (string, error) {
 	var lastErr error
 	var devicePaths []string
 	for _, target := range c.TargetPortals {
-		devicePath, err := c.connectTarget(ctx, c.TargetIqn, target, iFace, iscsiTransport)
+		devicePath, err := c.connectTarget(&logger, c.TargetIqn, target, iFace, iscsiTransport)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -278,21 +276,21 @@ func (c *Connector) Connect(ctx context.Context) (string, error) {
 	// GetISCSIDevices returns all devices if no paths are given
 	if len(devicePaths) < 1 {
 		c.Devices = []Device{}
-	} else if c.Devices, err = GetISCSIDevices(ctx, devicePaths, true); err != nil {
+	} else if c.Devices, err = GetISCSIDevices(&logger, devicePaths, true); err != nil {
 		return "", err
 	}
 
 	if len(c.Devices) < 1 {
 		logger.Error(lastErr, "failed to find device path", "length", len(c.Devices))
-		iscsiCmd(ctx, []string{"-m", "iface", "-I", iFace, "-o", "delete"}...)
+		iscsiCmd(&logger, []string{"-m", "iface", "-I", iFace, "-o", "delete"}...)
 		return "", fmt.Errorf("failed to find device path: %s, last error seen: %v", devicePaths, lastErr)
 	}
 
-	mountTargetDevice, err := c.getMountTargetDevice(ctx)
+	mountTargetDevice, err := c.getMountTargetDevice(&logger)
 	c.MountTargetDevice = mountTargetDevice
 	if err != nil {
 		logger.Error(err, "Connect failed")
-		err := RemoveSCSIDevices(ctx, c.Devices...)
+		err := RemoveSCSIDevices(&logger, c.Devices...)
 		if err != nil {
 			return "", err
 		}
@@ -302,7 +300,7 @@ func (c *Connector) Connect(ctx context.Context) (string, error) {
 	}
 
 	if c.IsMultipathEnabled() {
-		if err := c.IsMultipathConsistent(ctx); err != nil {
+		if err := c.IsMultipathConsistent(&logger); err != nil {
 			return "", fmt.Errorf("multipath is inconsistent: %v", err)
 		}
 	}
@@ -310,8 +308,7 @@ func (c *Connector) Connect(ctx context.Context) (string, error) {
 	return c.MountTargetDevice.GetPath(), nil
 }
 
-func (c *Connector) connectTarget(ctx context.Context, targetIqn string, target string, iFace string, iscsiTransport string) (string, error) {
-	logger := klog.FromContext(ctx)
+func (c *Connector) connectTarget(logger *logr.Logger, targetIqn string, target string, iFace string, iscsiTransport string) (string, error) {
 	logger.V(1).Info("Connect target", "iqn", targetIqn, "portal", target)
 	targetParts := strings.Split(target, ":")
 	targetPortal := targetParts[0]
@@ -322,7 +319,7 @@ func (c *Connector) connectTarget(ctx context.Context, targetIqn string, target 
 	baseArgs := []string{"-m", "node", "-T", targetIqn, "-p", targetPortal}
 	// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
 	// to avoid establishing additional sessions to the same target.
-	if _, err := iscsiCmd(ctx, append(baseArgs, []string{"-R"}...)...); err != nil {
+	if _, err := iscsiCmd(logger, append(baseArgs, []string{"-R"}...)...); err != nil {
 		logger.Error(err, "Failed to rescan session")
 		if os.IsTimeout(err) {
 			logger.V(1).Info("iscsiadm timed out, logging out")
@@ -342,39 +339,38 @@ func (c *Connector) connectTarget(ctx context.Context, targetIqn string, target 
 		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
 	}
 
-	exists, _ := sessionExists(ctx, portal, targetIqn)
+	exists, _ := sessionExists(logger, portal, targetIqn)
 	if exists {
 		logger.V(1).Info("Session already exists, checking if device path exists", "device", devicePath)
-		if err := waitForPathToExist(ctx, &devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
+		if err := waitForPathToExist(logger, &devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
 			return "", err
 		}
 		return devicePath, nil
 	}
 
-	if err := c.discoverTarget(ctx, targetIqn, iFace, portal); err != nil {
+	if err := c.discoverTarget(logger, targetIqn, iFace, portal); err != nil {
 		return "", err
 	}
 
 	// perform the login
-	err := Login(ctx, targetIqn, portal)
+	err := Login(logger, targetIqn, portal)
 	if err != nil {
 		logger.Error(err, "Failed to login")
 		return "", err
 	}
 
 	logger.V(1).Info("Waiting for device path to exist", "device", devicePath)
-	if err := waitForPathToExist(ctx, &devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
+	if err := waitForPathToExist(logger, &devicePath, c.RetryCount, c.CheckInterval, iscsiTransport); err != nil {
 		return "", err
 	}
 
 	return devicePath, nil
 }
 
-func (c *Connector) discoverTarget(ctx context.Context, targetIqn string, iFace string, portal string) error {
-	logger := klog.FromContext(ctx)
+func (c *Connector) discoverTarget(logger *logr.Logger, targetIqn string, iFace string, portal string) error {
 	if c.DoDiscovery {
 		// build discoverydb and discover iscsi target
-		if err := Discoverydb(ctx, portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
+		if err := Discoverydb(logger, portal, iFace, c.DiscoverySecrets, c.DoCHAPDiscovery); err != nil {
 			logger.Error(err, "Error in discovery of the target")
 			return err
 		}
@@ -382,7 +378,7 @@ func (c *Connector) discoverTarget(ctx context.Context, targetIqn string, iFace 
 
 	if c.DoCHAPDiscovery {
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(ctx, targetIqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
+		err := CreateDBEntry(logger, targetIqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
 		if err != nil {
 			logger.Error(err, "Error creating db entry")
 			return err
@@ -393,10 +389,10 @@ func (c *Connector) discoverTarget(ctx context.Context, targetIqn string, iFace 
 }
 
 // Disconnect is for backward-compatibility with c.Disconnect()
-func Disconnect(ctx context.Context, targetIqn string, targets []string) {
+func Disconnect(logger *logr.Logger, targetIqn string, targets []string) {
 	for _, target := range targets {
 		targetPortal := strings.Split(target, ":")[0]
-		err := Logout(ctx, targetIqn, targetPortal)
+		err := Logout(logger, targetIqn, targetPortal)
 		if err != nil {
 			return
 		}
@@ -407,7 +403,7 @@ func Disconnect(ctx context.Context, targetIqn string, targets []string) {
 		return
 	}
 	deleted[targetIqn] = true
-	err := DeleteDBEntry(ctx, targetIqn)
+	err := DeleteDBEntry(logger, targetIqn)
 	if err != nil {
 		return
 	}
@@ -416,7 +412,8 @@ func Disconnect(ctx context.Context, targetIqn string, targets []string) {
 // Disconnect performs a disconnect operation from an appliance.
 // Be sure to disconnect all devices properly before doing this as it can result in data loss.
 func (c *Connector) Disconnect(ctx context.Context) {
-	Disconnect(ctx, c.TargetIqn, c.TargetPortals)
+	logger := klog.FromContext(ctx)
+	Disconnect(&logger, c.TargetIqn, c.TargetPortals)
 }
 
 // DisconnectVolume removes a volume from a Linux host.
@@ -434,22 +431,22 @@ func (c *Connector) DisconnectVolume(ctx context.Context) error {
 	logger := klog.FromContext(ctx)
 
 	if c.IsMultipathEnabled() {
-		if err := c.IsMultipathConsistent(ctx); err != nil {
+		if err := c.IsMultipathConsistent(&logger); err != nil {
 			return fmt.Errorf("multipath is inconsistent: %v", err)
 		}
 
 		logger.V(1).Info("Removing multipath device in path", "device", c.MountTargetDevice.GetPath())
-		err := FlushMultipathDevice(ctx, c.MountTargetDevice)
+		err := FlushMultipathDevice(&logger, c.MountTargetDevice)
 		if err != nil {
 			return err
 		}
-		if err := RemoveSCSIDevices(ctx, c.Devices...); err != nil {
+		if err := RemoveSCSIDevices(&logger, c.Devices...); err != nil {
 			return err
 		}
 	} else {
 		devicePath := c.MountTargetDevice.GetPath()
 		logger.V(1).Info("Removing normal device in path", "device", devicePath)
-		if err := RemoveSCSIDevices(ctx, *c.MountTargetDevice); err != nil {
+		if err := RemoveSCSIDevices(&logger, *c.MountTargetDevice); err != nil {
 			return err
 		}
 	}
@@ -459,10 +456,9 @@ func (c *Connector) DisconnectVolume(ctx context.Context) error {
 }
 
 // getMountTargetDevice returns the device to be mounted among the configured devices
-func (c *Connector) getMountTargetDevice(ctx context.Context) (*Device, error) {
-	logger := klog.FromContext(ctx)
+func (c *Connector) getMountTargetDevice(logger *logr.Logger) (*Device, error) {
 	if len(c.Devices) > 1 {
-		multipathDevice, err := getMultipathDevice(ctx, c.Devices)
+		multipathDevice, err := getMultipathDevice(logger, c.Devices)
 		if err != nil {
 			logger.Error(err, "Mount target is not a multipath device")
 			return nil, err
@@ -485,11 +481,10 @@ func (c *Connector) IsMultipathEnabled() bool {
 
 // GetSCSIDevices get SCSI devices from device paths
 // It will returns all SCSI devices if no paths are given
-func GetSCSIDevices(ctx context.Context, devicePaths []string, strict bool) ([]Device, error) {
-	logger := klog.FromContext(ctx)
+func GetSCSIDevices(logger *logr.Logger, devicePaths []string, strict bool) ([]Device, error) {
 	logger.V(1).Info("Getting info about SCSI devices", "devices", devicePaths)
 
-	deviceInfo, err := lsblk(ctx, devicePaths, strict)
+	deviceInfo, err := lsblk(logger, devicePaths, strict)
 	if err != nil {
 		logger.Error(err, "An error occurred while looking info about SCSI devices")
 		return nil, err
@@ -500,9 +495,8 @@ func GetSCSIDevices(ctx context.Context, devicePaths []string, strict bool) ([]D
 
 // GetISCSIDevices get iSCSI devices from device paths
 // It will returns all iSCSI devices if no paths are given
-func GetISCSIDevices(ctx context.Context, devicePaths []string, strict bool) (devices []Device, err error) {
-	logger := klog.FromContext(ctx)
-	scsiDevices, err := GetSCSIDevices(ctx, devicePaths, strict)
+func GetISCSIDevices(logger *logr.Logger, devicePaths []string, strict bool) (devices []Device, err error) {
+	scsiDevices, err := GetSCSIDevices(logger, devicePaths, strict)
 	if err != nil {
 		return
 	}
@@ -519,8 +513,7 @@ func GetISCSIDevices(ctx context.Context, devicePaths []string, strict bool) (de
 }
 
 // lsblk execute the lsblk commands
-func lsblk(ctx context.Context, devicePaths []string, strict bool) (deviceInfo, error) {
-	logger := klog.FromContext(ctx)
+func lsblk(logger *logr.Logger, devicePaths []string, strict bool) (deviceInfo, error) {
 	flags := []string{"-rn", "-o", "NAME,KNAME,PKNAME,HCTL,TYPE,TRAN,SIZE"}
 	command := execCommand("lsblk", append(flags, devicePaths...)...)
 	logger.V(1).Info("lsblk", "command", command.String())
@@ -594,8 +587,7 @@ func lsblk(ctx context.Context, devicePaths []string, strict bool) (deviceInfo, 
 }
 
 // writeInSCSIDeviceFile write into special devices files to change devices state
-func writeInSCSIDeviceFile(ctx context.Context, hctl string, file string, content string) error {
-	logger := klog.FromContext(ctx)
+func writeInSCSIDeviceFile(logger *logr.Logger, hctl string, file string, content string) error {
 	filename := filepath.Join("/sys/class/scsi_device", hctl, "device", file)
 	logger.V(1).Info("Write to SCSI device", "content", content, "filename", filename)
 
@@ -615,8 +607,7 @@ func writeInSCSIDeviceFile(ctx context.Context, hctl string, file string, conten
 }
 
 // RemoveSCSIDevices removes SCSI device(s) from a Linux host.
-func RemoveSCSIDevices(ctx context.Context, devices ...Device) error {
-	logger := klog.FromContext(ctx)
+func RemoveSCSIDevices(logger *logr.Logger, devices ...Device) error {
 	logger.V(1).Info("Removing SCSI devices", "devices", devices)
 
 	var errs []error
@@ -633,7 +624,7 @@ func RemoveSCSIDevices(ctx context.Context, devices ...Device) error {
 		}
 
 		logger.V(1).Info("Put SCSI device offline", "device", device.Name)
-		err := device.Shutdown(ctx)
+		err := device.Shutdown(logger)
 		if err != nil {
 			if !os.IsNotExist(err) { // Ignore device already removed
 				errs = append(errs, err)
@@ -642,7 +633,7 @@ func RemoveSCSIDevices(ctx context.Context, devices ...Device) error {
 		}
 
 		logger.V(1).Info("Delete SCSI device", "device", device.Name)
-		err = device.Delete(ctx)
+		err = device.Delete(logger)
 		if err != nil {
 			if !os.IsNotExist(err) { // Ignore device already removed
 				errs = append(errs, err)
@@ -679,7 +670,7 @@ func (c *Connector) Persist(filePath string) error {
 }
 
 // GetConnectorFromFile attempts to create a Connector using the specified json file (ie /var/lib/pfile/myConnector.json)
-func GetConnectorFromFile(ctx context.Context, filePath string) (*Connector, error) {
+func GetConnectorFromFile(logger *logr.Logger, filePath string) (*Connector, error) {
 	f, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return nil, err
@@ -697,13 +688,13 @@ func GetConnectorFromFile(ctx context.Context, filePath string) (*Connector, err
 	if c.MountTargetDevice == nil {
 		return nil, fmt.Errorf("mountTargetDevice in the connector is nil")
 	}
-	if devices, err := GetSCSIDevices(ctx, []string{c.MountTargetDevice.GetPath()}, false); err != nil {
+	if devices, err := GetSCSIDevices(logger, []string{c.MountTargetDevice.GetPath()}, false); err != nil {
 		return nil, err
 	} else {
 		c.MountTargetDevice = &devices[0]
 	}
 
-	if c.Devices, err = GetSCSIDevices(ctx, devicePaths, false); err != nil {
+	if c.Devices, err = GetSCSIDevices(logger, devicePaths, false); err != nil {
 		return nil, err
 	}
 
@@ -711,7 +702,7 @@ func GetConnectorFromFile(ctx context.Context, filePath string) (*Connector, err
 }
 
 // IsMultipathConsistent check if the currently used device is using a consistent multipath mapping
-func (c *Connector) IsMultipathConsistent(ctx context.Context) error {
+func (c *Connector) IsMultipathConsistent(logger *logr.Logger) error {
 	devices := append([]Device{*c.MountTargetDevice}, c.Devices...)
 
 	referenceLUN := struct {
@@ -744,7 +735,7 @@ func (c *Connector) IsMultipathConsistent(ctx context.Context) error {
 			}
 		}
 
-		wwid, err := device.WWID(ctx)
+		wwid, err := device.WWID(logger)
 		if err != nil {
 			return fmt.Errorf("could not find WWID for device %s: %v", device.Name, err)
 		}
@@ -772,9 +763,9 @@ func (d *Device) GetPath() string {
 }
 
 // WWID returns the WWID of a device
-func (d *Device) WWID(ctx context.Context) (string, error) {
+func (d *Device) WWID(logger *logr.Logger) (string, error) {
 	timeout := 1 * time.Second
-	out, err := execWithTimeout(ctx, "scsi_id", []string{"-g", "-u", d.GetPath()}, timeout)
+	out, err := execWithTimeout(logger, "scsi_id", []string{"-g", "-u", d.GetPath()}, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -808,21 +799,21 @@ func (d *Device) HCTL() (*HCTL, error) {
 }
 
 // WriteDeviceFile write in a device file
-func (d *Device) WriteDeviceFile(ctx context.Context, name string, content string) error {
-	return writeInSCSIDeviceFile(ctx, d.Hctl, name, content)
+func (d *Device) WriteDeviceFile(logger *logr.Logger, name string, content string) error {
+	return writeInSCSIDeviceFile(logger, d.Hctl, name, content)
 }
 
 // Shutdown turn off an SCSI device by writing offline\n in /sys/class/scsi_device/h:c:t:l/device/state
-func (d *Device) Shutdown(ctx context.Context) error {
-	return d.WriteDeviceFile(ctx, "state", "offline\n")
+func (d *Device) Shutdown(logger *logr.Logger) error {
+	return d.WriteDeviceFile(logger, "state", "offline\n")
 }
 
 // Delete detach an SCSI device by writing 1 in /sys/class/scsi_device/h:c:t:l/device/delete
-func (d *Device) Delete(ctx context.Context) error {
-	return d.WriteDeviceFile(ctx, "delete", "1")
+func (d *Device) Delete(logger *logr.Logger) error {
+	return d.WriteDeviceFile(logger, "delete", "1")
 }
 
 // Rescan rescan an SCSI device by writing 1 in /sys/class/scsi_device/h:c:t:l/device/rescan
-func (d *Device) Rescan(ctx context.Context) error {
-	return d.WriteDeviceFile(ctx, "rescan", "1")
+func (d *Device) Rescan(logger *logr.Logger) error {
+	return d.WriteDeviceFile(logger, "rescan", "1")
 }

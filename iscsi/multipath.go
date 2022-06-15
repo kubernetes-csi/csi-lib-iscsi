@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/klog/v2"
 )
 
 // ExecWithTimeout execute a command with a timeout and returns an error if timeout is excedeed
-func ExecWithTimeout(ctx context.Context, command string, args []string, timeout time.Duration) ([]byte, error) {
-	logger := klog.FromContext(ctx)
+func ExecWithTimeout(logger *logr.Logger, command string, args []string, timeout time.Duration) ([]byte, error) {
 	logger.V(1).Info("Executing command with timeout", "command", command, "args", args)
 
 	// Create a new context and add a timeout to it
@@ -50,13 +50,12 @@ func ExecWithTimeout(ctx context.Context, command string, args []string, timeout
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
-func FlushMultipathDevice(ctx context.Context, device *Device) error {
+func FlushMultipathDevice(logger *logr.Logger, device *Device) error {
 	devicePath := device.GetPath()
-	logger := klog.FromContext(ctx)
 	logger.V(1).Info("Flushing multipath device", "device", devicePath)
 
 	timeout := 5 * time.Second
-	_, err := execWithTimeout(ctx, "multipath", []string{"-f", devicePath}, timeout)
+	_, err := execWithTimeout(logger, "multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
 		if _, e := osStat(devicePath); os.IsNotExist(e) {

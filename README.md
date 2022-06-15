@@ -17,14 +17,18 @@ golang libs.  This may prove to not be ideal, and may be changed over time, but 
 
 ## Logging and Debug
 
-By default the library uses klog and structured logging to produce InfoS and ErrorS log entries. A caller can replace
-the default io.Writer with their own by using the provided function:
+This library uses klog/v2 with structured and contextual logging to produce InfoS and ErrorS log entries. A caller
+can change the verbosity level by using the command line option of "-v=#" and using "-v=0" will not produce any
+log entries. To increase the verbosity of the log entries, use "-v=2". External functions require context.Context
+and the logger is extracted from the context using klog.FromContext(ctx), and then a logger pointer is passed around
+to internal functions that rely on InfoS and ErrorS calls.
 
-```
-func EnableDebugLogging(writer io.Writer)
-```
+## External Binary Dependencies
 
-This direct logging to the provided io.Writer and include the response of every iscsiadm command issued.
+This library relies on the following operating system executables:
+* iscsiadm - Open-iscsi administration utility.
+* multipath - Device mapper target autoconfig.
+* multipathd - Multipath daemon.
 
 ## Intended Usage
 
