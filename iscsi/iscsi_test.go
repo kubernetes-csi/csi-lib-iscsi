@@ -11,13 +11,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/prashantv/gostub"
 	"github.com/stretchr/testify/assert"
-	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
 )
 
@@ -120,8 +118,8 @@ func makeFakeExecCommandContext(exitStatus int, stdout string) func(context.Cont
 	}
 }
 
-func makeFakeExecWithTimeout(withTimeout bool, output []byte, err error) func(string, []string, time.Duration) ([]byte, error) {
-	return func(command string, args []string, timeout time.Duration) ([]byte, error) {
+func makeFakeExecWithTimeout(ctx context.Context, withTimeout bool, output []byte, err error) func(context.Context, string, []string, time.Duration) ([]byte, error) {
+	return func(ctx context.Context, command string, args []string, timeout time.Duration) ([]byte, error) {
 		if withTimeout {
 			return nil, context.DeadlineExceeded
 		}
@@ -263,8 +261,9 @@ func Test_extractTransportName(t *testing.T) {
 }
 
 func Test_sessionExists(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	fakeOutput := "tcp: [4] 192.168.1.107:3260,1 iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced (non-flash)\n"
-	defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(fakeOutput), nil)).Reset()
+	defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(ctx, false, []byte(fakeOutput), nil)).Reset()
 
 	type args struct {
 		tgtPortal string
@@ -290,7 +289,7 @@ func Test_sessionExists(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sessionExists(tt.args.tgtPortal, tt.args.tgtIQN)
+			got, err := sessionExists(ctx, tt.args.tgtPortal, tt.args.tgtIQN)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("sessionExists() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -324,10 +323,10 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 			} else {
 				os.RemoveAll(testRootFS)
 			}
-
+			_, ctx := ktesting.NewTestContext(t)
 			device := Device{Name: "test"}
 			c := Connector{Devices: []Device{device}, MountTargetDevice: &device}
-			err := c.DisconnectVolume()
+			err := c.DisconnectVolume(ctx)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -368,12 +367,12 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer gostub.Stub(&execWithTimeout, func(cmd string, args []string, timeout time.Duration) ([]byte, error) {
+			defer gostub.Stub(&execWithTimeout, func(ctx context.Context, cmd string, args []string, timeout time.Duration) ([]byte, error) {
 				mockedOutput := []byte("")
 				if cmd == "scsi_id" {
 					mockedOutput = []byte(wwid + "\n")
 				}
-				return makeFakeExecWithTimeout(tt.timeout, mockedOutput, nil)(cmd, args, timeout)
+				return makeFakeExecWithTimeout(ctx, tt.timeout, mockedOutput, nil)(ctx, cmd, args, timeout)
 			}).Reset()
 			c := Connector{
 				Devices:           []Device{{Hctl: "0:0:0:0"}, {Hctl: "1:0:0:0"}},
@@ -395,7 +394,8 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 				os.Remove(testRootFS)
 			}
 
-			err := c.DisconnectVolume()
+			_, ctx := ktesting.NewTestContext(t)
+			err := c.DisconnectVolume(ctx)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DisconnectVolume() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -415,22 +415,8 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 	}
 }
 
-func Test_EnableDebugLogging(t *testing.T) {
-	assert := assert.New(t)
-	data := []byte{}
-	writer := testWriter{data: &data}
-	klog.SetOutput(writer)
-
-	assert.Equal("", string(data))
-	assert.Len(strings.Split(string(data), "\n"), 1)
-
-	logger, _ := ktesting.NewTestContext(t)
-	logger.Info("testing debug logs")
-	assert.Contains(string(data), "testing debug logs")
-	assert.Len(strings.Split(string(data), "\n"), 2)
-}
-
 func Test_waitForPathToExist(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		attempts     int
 		fileNotFound bool
@@ -492,7 +478,7 @@ func Test_waitForPathToExist(t *testing.T) {
 			}).Reset()
 			defer gostub.Stub(&sleep, func(_ time.Duration) {}).Reset()
 			path := "/somefile"
-			err := waitForPathToExist(&path, uint(maxRetries), 1, tt.transport)
+			err := waitForPathToExist(logger, &path, uint(maxRetries), 1, tt.transport)
 
 			if tt.withErr {
 				if tt.transport == "tcp" {
@@ -521,16 +507,16 @@ func Test_waitForPathToExist(t *testing.T) {
 		assert := assert.New(t)
 		path := ""
 
-		err := waitForPathToExist(&path, 0, 0, "tcp")
+		err := waitForPathToExist(logger, &path, 0, 0, "tcp")
 		assert.NotNil(err)
 
-		err = waitForPathToExist(&path, 0, 0, "")
+		err = waitForPathToExist(logger, &path, 0, 0, "")
 		assert.NotNil(err)
 
-		err = waitForPathToExist(nil, 0, 0, "tcp")
+		err = waitForPathToExist(logger, nil, 0, 0, "tcp")
 		assert.NotNil(err)
 
-		err = waitForPathToExist(nil, 0, 0, "")
+		err = waitForPathToExist(logger, nil, 0, 0, "")
 		assert.NotNil(err)
 	})
 
@@ -541,7 +527,7 @@ func Test_waitForPathToExist(t *testing.T) {
 		}).Reset()
 
 		path := "/test"
-		err := waitForPathToExist(&path, 0, 0, "")
+		err := waitForPathToExist(logger, &path, 0, 0, "")
 		assert.NotNil(err)
 		assert.Equal(os.ErrNotExist, err)
 	})
@@ -556,6 +542,7 @@ func Test_getMultipathDevice(t *testing.T) {
 	sdd := Device{Name: "sdc", Children: []Device{mpath2}}
 	sde := Device{Name: "sdc", Children: []Device{mpath1, mpath2}}
 
+	logger, _ := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		mockedDevices   []Device
 		multipathDevice *Device
@@ -582,7 +569,7 @@ func Test_getMultipathDevice(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			multipathDevice, err := getMultipathDevice(tt.mockedDevices)
+			multipathDevice, err := getMultipathDevice(logger, tt.mockedDevices, false)
 
 			if tt.wantErr {
 				assert.Nil(multipathDevice)
@@ -600,6 +587,7 @@ func Test_lsblk(t *testing.T) {
 	sda := Device{Name: "sda", Children: []Device{sda1}}
 	sdaOutput := marshalDeviceInfo(&deviceInfo{sda, sda1})
 
+	logger, _ := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		devicePaths      []string
 		strict           bool
@@ -645,7 +633,7 @@ func Test_lsblk(t *testing.T) {
 			assert := assert.New(t)
 
 			defer gostub.Stub(&execCommand, makeFakeExecCommand(tt.mockedExitStatus, tt.mockedStdout)).Reset()
-			deviceInfo, err := lsblk(tt.devicePaths, tt.strict)
+			deviceInfo, err := lsblk(logger, tt.devicePaths, tt.strict)
 
 			if tt.wantErr {
 				assert.Nil(deviceInfo)
@@ -722,8 +710,9 @@ func TestConnectorPersistance(t *testing.T) {
 		return makeFakeExecCommand(0, string(mockedOutput))(cmd, args...)
 	}).Reset()
 
+	logger, _ := ktesting.NewTestContext(t)
 	c.Persist("/tmp/connector.json")
-	c2, err := GetConnectorFromFile("/tmp/connector.json")
+	c2, err := GetConnectorFromFile(logger, "/tmp/connector.json")
 	assert.Nil(err)
 	assert.NotNil(c2)
 	if c2 != nil {
@@ -734,12 +723,12 @@ func TestConnectorPersistance(t *testing.T) {
 	assert.NotNil(err)
 
 	os.Remove("/tmp/shouldNotExists.json")
-	_, err = GetConnectorFromFile("/tmp/shouldNotExists.json")
+	_, err = GetConnectorFromFile(logger, "/tmp/shouldNotExists.json")
 	assert.NotNil(err)
 	assert.IsType(&os.PathError{}, err)
 
 	ioutil.WriteFile("/tmp/connector.json", []byte("not a connector"), 0600)
-	_, err = GetConnectorFromFile("/tmp/connector.json")
+	_, err = GetConnectorFromFile(logger, "/tmp/connector.json")
 	assert.NotNil(err)
 	assert.IsType(&json.SyntaxError{}, err)
 }
@@ -760,6 +749,7 @@ func Test_IsMultipathConsistent(t *testing.T) {
 	devicesWWIDs[sdb.GetPath()] = "3600c0ff0000000000000000000000000"
 	devicesWWIDs[sdg.GetPath()] = "3600c0ff0000000000000000000000024"
 
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		connector   *Connector
 		wantErr     bool
@@ -834,7 +824,7 @@ func Test_IsMultipathConsistent(t *testing.T) {
 			assert := assert.New(t)
 			c := tt.connector
 
-			defer gostub.Stub(&execWithTimeout, func(_ string, args []string, _ time.Duration) ([]byte, error) {
+			defer gostub.Stub(&execWithTimeout, func(_ context.Context, _ string, args []string, _ time.Duration) ([]byte, error) {
 				devicePath := args[len(args)-1]
 				wwid, ok := devicesWWIDs[devicePath]
 				if !ok {
@@ -843,7 +833,7 @@ func Test_IsMultipathConsistent(t *testing.T) {
 				return []byte(wwid + "\n"), nil
 			}).Reset()
 
-			err := c.IsMultipathConsistent()
+			err := c.IsMultipathConsistent(ctx)
 
 			if tt.wantErr {
 				assert.Error(err)

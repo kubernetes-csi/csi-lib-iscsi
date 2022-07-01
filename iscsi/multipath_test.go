@@ -8,9 +8,11 @@ import (
 
 	"github.com/prashantv/gostub"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/klog/v2/ktesting"
 )
 
 func TestExecWithTimeout(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		mockedStdout     string
 		mockedExitStatus int
@@ -58,7 +60,7 @@ func TestExecWithTimeout(t *testing.T) {
 				return makeFakeExecCommandContext(tt.mockedExitStatus, tt.mockedStdout)(ctx, command, args...)
 			}).Reset()
 
-			out, err := ExecWithTimeout("dummy", []string{}, timeout)
+			out, err := ExecWithTimeout(ctx, "dummy", []string{}, timeout)
 
 			if tt.wantTimeout || tt.mockedExitStatus != 0 {
 				assert.NotNil(err)

@@ -17,7 +17,7 @@ golang libs.  This may prove to not be ideal, and may be changed over time, but 
 
 ## Logging and Debug
 
-This library uses klog/v2 with structured and contextual logging to produce InfoS and ErrorS log entries. A caller
+This library uses klog/v2 with structured and contextual logging to produce Info and Error log entries. A caller
 can change the verbosity level by using the command line option of "-v=#" and using "-v=0" will not produce any
 log entries. To increase the verbosity of the log entries, use "-v=2". External functions require context.Context
 and the logger is extracted from the context using klog.FromContext(ctx), and then a logger pointer is passed around

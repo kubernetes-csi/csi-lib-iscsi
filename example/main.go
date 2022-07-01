@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kubernetes-csi/csi-lib-iscsi/iscsi"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -16,15 +18,13 @@ var (
 	username = flag.String("username", "3aX7EEf3CEgvESQG75qh", "")
 	password = flag.String("password", "eJBDC7Bt7WE3XFDq", "")
 	lun      = flag.Int("lun", 1, "")
-	debug    = flag.Bool("debug", false, "enable logging")
 )
 
 func main() {
+	klog.InitFlags(nil)
+	klog.EnableContextualLogging(true)
 	flag.Parse()
 	tgtps := strings.Split(*portals, ",")
-	if *debug {
-		iscsi.EnableDebugLogging(os.Stdout)
-	}
 
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
 	// you can simplify interactions to simple calls like "Connect" and "Disconnect"
@@ -43,15 +43,18 @@ func main() {
 			SecretsType: "chap"},
 		// Lun is the lun number the devices uses for exports
 		Lun: int32(*lun),
-		// Number of times we check for device path, waiting for CheckInterval seconds inbetween each check (defaults to 10 if omitted)
+		// Number of times we check for device path, waiting for CheckInterval seconds in-between each check (defaults to 10 if omitted)
 		RetryCount: 11,
-		// CheckInterval is the time in seconds to wait inbetween device path checks when logging in to a target
+		// CheckInterval is the time in seconds to wait in-between device path checks when logging in to a target
 		CheckInterval: 1,
 	}
 
+	// Create a context object to be shared with the iscsi routines
+	ctx := context.Background()
+
 	// Now we can just issue a connection request using our Connector
-	// A succesful connection will include the device path to access our iscsi volume
-	path, err := c.Connect()
+	// A successful connection will include the device path to access our iscsi volume
+	path, err := c.Connect(ctx)
 	if err != nil {
 		log.Printf("Error returned from c.Connect: %s", err.Error())
 		os.Exit(1)
@@ -61,11 +64,11 @@ func main() {
 	time.Sleep(3 * time.Second)
 
 	// This will disconnect the volume
-	if err := c.DisconnectVolume(); err != nil {
+	if err := c.DisconnectVolume(ctx); err != nil {
 		log.Printf("Error returned from c.DisconnectVolume: %s", err.Error())
 		os.Exit(1)
 	}
 
 	// This will disconnect the session as well as clear out the iscsi DB entries associated with it
-	c.Disconnect()
+	c.Disconnect(ctx)
 }

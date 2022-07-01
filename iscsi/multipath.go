@@ -9,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-logr/logr"
 	"k8s.io/klog/v2"
 )
 
-// ExecWithTimeout execute a command with a timeout and returns an error if timeout is excedeed
-func ExecWithTimeout(logger *logr.Logger, command string, args []string, timeout time.Duration) ([]byte, error) {
-	logger.V(1).Info("Executing command with timeout", "command", command, "args", args)
+// ExecWithTimeout execute a command with a timeout and returns an error if timeout is exceeded
+func ExecWithTimeout(ctx context.Context, command string, args []string, timeout time.Duration) ([]byte, error) {
+	logger := klog.FromContext(ctx)
+	logger.V(1).Info("Executing command with timeout", "command", command, "args", args, "timeout", timeout)
 
 	// Create a new context and add a timeout to it
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Create command with context
@@ -27,7 +27,7 @@ func ExecWithTimeout(logger *logr.Logger, command string, args []string, timeout
 	// This time we can simply use Output() to get the result.
 	out, err := cmd.Output()
 	if err != nil {
-		klog.ErrorS(err, "Command error", "command", command, "timeout", timeout, "output", out)
+		logger.Error(err, "Command error", "command", command, "timeout", timeout, "output", out)
 	}
 
 	// We want to check the context error to see if the timeout was executed.
@@ -41,7 +41,7 @@ func ExecWithTimeout(logger *logr.Logger, command string, args []string, timeout
 	if err != nil {
 		var ee *exec.ExitError
 		if ok := errors.Is(err, ee); ok {
-			klog.ErrorS(err, "Non-zero exit code", "command", command)
+			logger.Error(err, "Non-zero exit code", "command", command)
 			err = fmt.Errorf("%s", ee.Stderr)
 		}
 	}
@@ -50,12 +50,13 @@ func ExecWithTimeout(logger *logr.Logger, command string, args []string, timeout
 }
 
 // FlushMultipathDevice flushes a multipath device dm-x with command multipath -f /dev/dm-x
-func FlushMultipathDevice(logger *logr.Logger, device *Device) error {
+func FlushMultipathDevice(ctx context.Context, device *Device) error {
 	devicePath := device.GetPath()
+	logger := klog.FromContext(ctx)
 	logger.V(1).Info("Flushing multipath device", "device", devicePath)
 
 	timeout := 5 * time.Second
-	_, err := execWithTimeout(logger, "multipath", []string{"-f", devicePath}, timeout)
+	_, err := execWithTimeout(ctx, "multipath", []string{"-f", devicePath}, timeout)
 
 	if err != nil {
 		if _, e := osStat(devicePath); os.IsNotExist(e) {
@@ -64,7 +65,7 @@ func FlushMultipathDevice(logger *logr.Logger, device *Device) error {
 			if strings.Contains(err.Error(), "map in use") {
 				err = fmt.Errorf("device is probably still in use somewhere else: %v", err)
 			}
-			klog.ErrorS(err, "Command 'multipath -f <device>' did not succeed to delete the device", "device", devicePath)
+			logger.Error(err, "Command 'multipath -f <device>' did not succeed to delete the device", "device", devicePath)
 			return err
 		}
 	}
