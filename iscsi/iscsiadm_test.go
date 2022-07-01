@@ -6,6 +6,7 @@ import (
 
 	"github.com/prashantv/gostub"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/klog/v2/ktesting"
 )
 
 const defaultInterface = `
@@ -68,6 +69,7 @@ iface.discovery_logout = <empty>
 `
 
 func TestDiscovery(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		tgtPortal       string
 		iface           string
@@ -127,8 +129,8 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
-			err := Discoverydb(tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(ctx, false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
+			err := Discoverydb(ctx, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.chapDiscovery)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Discoverydb() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -138,6 +140,7 @@ iscsiadm: Could not perform SendTargets discovery.\n`,
 }
 
 func TestCreateDBEntry(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		tgtPortal       string
 		tgtIQN          string
@@ -177,8 +180,8 @@ func TestCreateDBEntry(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
-			err := CreateDBEntry(tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret)
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(ctx, false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
+			err := CreateDBEntry(ctx, tt.tgtIQN, tt.tgtPortal, tt.iface, tt.discoverySecret, tt.sessionSecret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateDBEntry() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -188,6 +191,7 @@ func TestCreateDBEntry(t *testing.T) {
 }
 
 func TestListInterfaces(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		mockedStdout   string
 		mockedCmdError error
@@ -223,8 +227,8 @@ func TestListInterfaces(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
-			interfaces, err := ListInterfaces()
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(ctx, false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
+			interfaces, err := ListInterfaces(ctx)
 
 			if tt.wantErr {
 				assert.NotNil(err)
@@ -237,6 +241,7 @@ func TestListInterfaces(t *testing.T) {
 }
 
 func TestShowInterface(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
 	tests := map[string]struct {
 		mockedStdout   string
 		mockedCmdError error
@@ -260,8 +265,8 @@ func TestShowInterface(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
-			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
-			interfaces, err := ShowInterface("default")
+			defer gostub.Stub(&execWithTimeout, makeFakeExecWithTimeout(ctx, false, []byte(tt.mockedStdout), tt.mockedCmdError)).Reset()
+			interfaces, err := ShowInterface(ctx, "default")
 
 			if tt.wantErr {
 				assert.NotNil(err)
