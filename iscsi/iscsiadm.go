@@ -168,21 +168,21 @@ func Login(tgtIQN, portal string) error {
 func Logout(tgtIQN, portal string) error {
 	debug.Println("Begin Logout...")
 	args := []string{"-m", "node", "-T", tgtIQN, "-p", portal, "-u"}
-	iscsiCmd(args...)
-	return nil
+	_, err := iscsiCmd(args...)
+	return err
 }
 
 // DeleteDBEntry deletes the iscsi db entry for the specified target
 func DeleteDBEntry(tgtIQN string) error {
 	debug.Println("Begin DeleteDBEntry...")
 	args := []string{"-m", "node", "-T", tgtIQN, "-o", "delete"}
-	iscsiCmd(args...)
-	return nil
+	_, err := iscsiCmd(args...)
+	return err
 }
 
 // DeleteIFace delete the iface
 func DeleteIFace(iface string) error {
 	debug.Println("Begin DeleteIFace...")
-	iscsiCmd([]string{"-m", "iface", "-I", iface, "-o", "delete"}...)
-	return nil
+	_, err := iscsiCmd([]string{"-m", "iface", "-I", iface, "-o", "delete"}...)
+	return err
 }

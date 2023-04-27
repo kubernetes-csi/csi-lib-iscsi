@@ -723,7 +723,8 @@ func TestConnectorPersistance(t *testing.T) {
 		return makeFakeExecCommand(0, string(mockedOutput))(cmd, args...)
 	}).Reset()
 
-	c.Persist("/tmp/connector.json")
+	err := c.Persist("/tmp/connector.json")
+	assert.Nil(err)
 	c2, err := GetConnectorFromFile("/tmp/connector.json")
 	assert.Nil(err)
 	assert.NotNil(c2)
