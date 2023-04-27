@@ -10,14 +10,6 @@ import (
 	"time"
 )
 
-type pathGroup struct {
-	Paths []path `json:"paths"`
-}
-
-type path struct {
-	Device string `json:"dev"`
-}
-
 // ExecWithTimeout execute a command with a timeout and returns an error if timeout is exceeded
 func ExecWithTimeout(command string, args []string, timeout time.Duration) ([]byte, error) {
 	debug.Printf("Executing command '%v' with args: '%v'.\n", command, args)
