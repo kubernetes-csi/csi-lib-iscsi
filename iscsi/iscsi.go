@@ -283,7 +283,7 @@ func (c *Connector) Connect() (string, error) {
 	}
 
 	if len(c.Devices) < 1 {
-		iscsiCmd([]string{"-m", "iface", "-I", iFace, "-o", "delete"}...)
+		_, _ = iscsiCmd([]string{"-m", "iface", "-I", iFace, "-o", "delete"}...)
 		return "", fmt.Errorf("failed to find device path: %s, last error seen: %v", devicePaths, lastErr)
 	}
 
@@ -679,11 +679,14 @@ func GetConnectorFromFile(filePath string) (*Connector, error) {
 	if c.MountTargetDevice == nil {
 		return nil, fmt.Errorf("mountTargetDevice in the connector is nil")
 	}
-	if devices, err := GetSCSIDevices([]string{c.MountTargetDevice.GetPath()}, false); err != nil {
+	devices, err := GetSCSIDevices([]string{c.MountTargetDevice.GetPath()}, false)
+	if err != nil {
 		return nil, err
-	} else {
-		c.MountTargetDevice = &devices[0]
 	}
+	if len(devices) == 0 {
+		return nil, fmt.Errorf("mountTargetDevice %s not found", c.MountTargetDevice.GetPath())
+	}
+	c.MountTargetDevice = &devices[0]
 
 	if c.Devices, err = GetSCSIDevices(devicePaths, false); err != nil {
 		return nil, err

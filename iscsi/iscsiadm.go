@@ -100,14 +100,14 @@ func Discoverydb(tp, iface string, discoverySecrets Secrets, chapDiscovery bool)
 	_, err = iscsiCmd(append(baseArgs, []string{"--discover"}...)...)
 	if err != nil {
 		// delete the discoverydb record
-		iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
+		_, _ = iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
 		return fmt.Errorf("failed to sendtargets to portal %s, err: %v", tp, err)
 	}
 	return nil
 }
 
 func createCHAPEntries(baseArgs []string, secrets Secrets, discovery bool) error {
-	args := []string{}
+	var args []string
 	debug.Printf("Begin createCHAPEntries (discovery=%t)...", discovery)
 	if discovery {
 		args = append(baseArgs, []string{
@@ -122,9 +122,7 @@ func createCHAPEntries(baseArgs []string, secrets Secrets, discovery bool) error
 		if secrets.PasswordIn != "" {
 			args = append(args, []string{"-n", "discovery.sendtargets.auth.password_in", "-v", secrets.PasswordIn}...)
 		}
-
 	} else {
-
 		args = append(baseArgs, []string{
 			"-o", "update",
 			"-n", "node.session.auth.authmethod", "-v", "CHAP",
@@ -160,7 +158,7 @@ func Login(tgtIQN, portal string) error {
 	baseArgs := []string{"-m", "node", "-T", tgtIQN, "-p", portal}
 	if _, err := iscsiCmd(append(baseArgs, []string{"-l"}...)...); err != nil {
 		// delete the node record from database
-		iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
+		_, _ = iscsiCmd(append(baseArgs, []string{"-o", "delete"}...)...)
 		return fmt.Errorf("failed to sendtargets to portal %s, err: %v", portal, err)
 	}
 	return nil
@@ -170,21 +168,21 @@ func Login(tgtIQN, portal string) error {
 func Logout(tgtIQN, portal string) error {
 	debug.Println("Begin Logout...")
 	args := []string{"-m", "node", "-T", tgtIQN, "-p", portal, "-u"}
-	iscsiCmd(args...)
-	return nil
+	_, err := iscsiCmd(args...)
+	return err
 }
 
 // DeleteDBEntry deletes the iscsi db entry for the specified target
 func DeleteDBEntry(tgtIQN string) error {
 	debug.Println("Begin DeleteDBEntry...")
 	args := []string{"-m", "node", "-T", tgtIQN, "-o", "delete"}
-	iscsiCmd(args...)
-	return nil
+	_, err := iscsiCmd(args...)
+	return err
 }
 
 // DeleteIFace delete the iface
 func DeleteIFace(iface string) error {
 	debug.Println("Begin DeleteIFace...")
-	iscsiCmd([]string{"-m", "iface", "-I", iface, "-o", "delete"}...)
-	return nil
+	_, err := iscsiCmd([]string{"-m", "iface", "-I", iface, "-o", "delete"}...)
+	return err
 }

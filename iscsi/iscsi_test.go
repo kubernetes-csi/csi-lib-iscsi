@@ -322,9 +322,9 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.withDeviceFile {
-				os.Create(deleteDeviceFile)
+				_, _ = os.Create(deleteDeviceFile)
 			} else {
-				os.RemoveAll(testRootFS)
+				_ = os.RemoveAll(testRootFS)
 			}
 
 			device := Device{Name: "test"}
@@ -723,7 +723,8 @@ func TestConnectorPersistance(t *testing.T) {
 		return makeFakeExecCommand(0, string(mockedOutput))(cmd, args...)
 	}).Reset()
 
-	c.Persist("/tmp/connector.json")
+	err := c.Persist("/tmp/connector.json")
+	assert.Nil(err)
 	c2, err := GetConnectorFromFile("/tmp/connector.json")
 	assert.Nil(err)
 	assert.NotNil(c2)
@@ -739,7 +740,8 @@ func TestConnectorPersistance(t *testing.T) {
 	assert.NotNil(err)
 	assert.IsType(&os.PathError{}, err)
 
-	ioutil.WriteFile("/tmp/connector.json", []byte("not a connector"), 0o600)
+	err = ioutil.WriteFile("/tmp/connector.json", []byte("not a connector"), 0o600)
+	assert.Nil(err)
 	_, err = GetConnectorFromFile("/tmp/connector.json")
 	assert.NotNil(err)
 	assert.IsType(&json.SyntaxError{}, err)
