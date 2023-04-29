@@ -10,7 +10,7 @@ github.com/pmezard/go-difflib/difflib
 # github.com/prashantv/gostub v1.1.0
 ## explicit; go 1.17
 github.com/prashantv/gostub
-# github.com/stretchr/testify v1.8.0
+# github.com/stretchr/testify v1.8.2
 ## explicit; go 1.13
 github.com/stretchr/testify/assert
 # gopkg.in/yaml.v3 v3.0.1
