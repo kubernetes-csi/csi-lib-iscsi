@@ -16,15 +16,11 @@ var (
 	username = flag.String("username", "3aX7EEf3CEgvESQG75qh", "")
 	password = flag.String("password", "eJBDC7Bt7WE3XFDq", "")
 	lun      = flag.Int("lun", 1, "")
-	debug    = flag.Bool("debug", false, "enable logging")
 )
 
 func main() {
 	flag.Parse()
 	tgtps := strings.Split(*portals, ",")
-	if *debug {
-		iscsi.EnableDebugLogging(os.Stdout)
-	}
 
 	// You can utilize the iscsiadm calls directly if you wish, but by creating a Connector
 	// you can simplify interactions to simple calls like "Connect" and "Disconnect"
