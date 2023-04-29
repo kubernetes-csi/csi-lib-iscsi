@@ -24,4 +24,4 @@ jobs:
 
     - name: Build test
       run: |
-        go build -a -mod vendor -o example/example ./example
+        go build -a -mod vendor -o example/iscsi-lib-example ./example

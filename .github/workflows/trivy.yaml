@@ -1,0 +1,32 @@
+name: Trivy vulnerability scanner
+on:
+    pull_request: {}
+    push: {}
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v2
+        with:
+          go-version: ^1.19
+        id: go
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Build a binary
+        run: |
+          go build -a -mod vendor -o example/iscsi-lib-example ./example
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: 'example/iscsi-lib-example'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'

@@ -19,4 +19,4 @@ jobs:
         uses: actions/checkout@v2
       - name: Build Test
         run: |
-          go build -a -o example/example.exe ./example
+          go build -a -o example/iscsi-lib-example.exe ./example
