@@ -18,15 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type testWriter struct {
-	data *[]byte
-}
-
-func (w testWriter) Write(data []byte) (n int, err error) {
-	*w.data = append(*w.data, data...)
-	return len(data), nil
-}
-
 const nodeDB = `
 # BEGIN RECORD 6.2.0.874
 node.name = iqn.2010-10.org.openstack:volume-eb393993-73d0-4e39-9ef4-b5841e244ced
