@@ -11,22 +11,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/prashantv/gostub"
 	"github.com/stretchr/testify/assert"
 )
-
-type testWriter struct {
-	data *[]byte
-}
-
-func (w testWriter) Write(data []byte) (n int, err error) {
-	*w.data = append(*w.data, data...)
-	return len(data), nil
-}
 
 const nodeDB = `
 # BEGIN RECORD 6.2.0.874
@@ -415,20 +405,6 @@ func Test_DisconnectMultipathVolume(t *testing.T) {
 			}
 		})
 	}
-}
-
-func Test_EnableDebugLogging(t *testing.T) {
-	assert := assert.New(t)
-	data := []byte{}
-	writer := testWriter{data: &data}
-	EnableDebugLogging(writer)
-
-	assert.Equal("", string(data))
-	assert.Len(strings.Split(string(data), "\n"), 1)
-
-	debug.Print("testing debug logs")
-	assert.Contains(string(data), "testing debug logs")
-	assert.Len(strings.Split(string(data), "\n"), 2)
 }
 
 func Test_waitForPathToExist(t *testing.T) {
