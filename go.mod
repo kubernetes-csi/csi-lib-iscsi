@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/prashantv/gostub v1.1.0
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.4
 	k8s.io/klog/v2 v2.90.1
 )
 
