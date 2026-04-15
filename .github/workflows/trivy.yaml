@@ -1,7 +1,10 @@
 name: Trivy vulnerability scanner
 on:
-    pull_request: {}
-    push: {}
+    push:
+      branches:
+        - master
+    schedule:
+      - cron: '0 0 * * *'  # Run daily at midnight UTC
 jobs:
   build:
     name: Build
