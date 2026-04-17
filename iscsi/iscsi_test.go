@@ -106,14 +106,8 @@ func makeFakeExecCommand(exitStatus int, stdout string) func(string, ...string) 
 	}
 }
 
-func makeFakeExecCommandContext(exitStatus int, stdout string) func(context.Context, string, ...string) *exec.Cmd {
-	return func(ctx context.Context, command string, args ...string) *exec.Cmd {
-		return makeFakeExecCommand(exitStatus, stdout)(command, args...)
-	}
-}
-
 func makeFakeExecWithTimeout(withTimeout bool, output []byte, err error) func(string, []string, time.Duration) ([]byte, error) {
-	return func(command string, args []string, timeout time.Duration) ([]byte, error) {
+	return func(_ string, _ []string, _ time.Duration) ([]byte, error) {
 		if withTimeout {
 			return nil, context.DeadlineExceeded
 		}
@@ -136,6 +130,7 @@ func marshalDeviceInfo(d *deviceInfo) string {
 }
 
 func TestExecCommandHelper(t *testing.T) {
+	_ = t // This function is used as a subprocess helper, not a real test
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
@@ -296,7 +291,7 @@ func Test_sessionExists(t *testing.T) {
 
 func Test_DisconnectNormalVolume(t *testing.T) {
 	deleteDeviceFile := "/tmp/deleteDevice"
-	defer gostub.Stub(&osOpenFile, func(name string, flag int, perm os.FileMode) (*os.File, error) {
+	defer gostub.Stub(&osOpenFile, func(_ string, flag int, perm os.FileMode) (*os.File, error) {
 		return os.OpenFile(deleteDeviceFile, flag, perm)
 	}).Reset()
 
@@ -341,7 +336,7 @@ func Test_DisconnectNormalVolume(t *testing.T) {
 }
 
 func Test_DisconnectMultipathVolume(t *testing.T) {
-	defer gostub.Stub(&osStat, func(name string) (os.FileInfo, error) {
+	defer gostub.Stub(&osStat, func(_ string) (os.FileInfo, error) {
 		return nil, nil
 	}).Reset()
 
@@ -455,13 +450,13 @@ func Test_waitForPathToExist(t *testing.T) {
 				}
 				return nil
 			}
-			defer gostub.Stub(&osStat, func(name string) (os.FileInfo, error) {
+			defer gostub.Stub(&osStat, func(_ string) (os.FileInfo, error) {
 				if err := doAttempt(os.ErrPermission); err != nil {
 					return nil, err
 				}
 				return nil, nil
 			}).Reset()
-			defer gostub.Stub(&filepathGlob, func(name string) ([]string, error) {
+			defer gostub.Stub(&filepathGlob, func(_ string) ([]string, error) {
 				if err := doAttempt(filepath.ErrBadPattern); err != nil {
 					return nil, err
 				}
@@ -513,7 +508,7 @@ func Test_waitForPathToExist(t *testing.T) {
 
 	t.Run("PathNotFound", func(t *testing.T) {
 		assert := assert.New(t)
-		defer gostub.Stub(&filepathGlob, func(name string) ([]string, error) {
+		defer gostub.Stub(&filepathGlob, func(_ string) ([]string, error) {
 			return nil, nil
 		}).Reset()
 
