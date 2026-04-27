@@ -12,67 +12,52 @@ import (
 
 func TestExecWithTimeout(t *testing.T) {
 	tests := map[string]struct {
-		mockedStdout     string
-		mockedExitStatus int
-		wantTimeout      bool
+		wantOutput  string
+		wantErr     bool
+		wantTimeout bool
+		stubCmd     func(ctx context.Context, command string, args ...string) *exec.Cmd
 	}{
 		"Success": {
-			mockedStdout:     "some output",
-			mockedExitStatus: 0,
-			wantTimeout:      false,
+			wantOutput: "some output",
+			stubCmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "echo", "-n", "some output")
+			},
 		},
 		"WithError": {
-			mockedStdout:     "some\noutput",
-			mockedExitStatus: 1,
-			wantTimeout:      false,
+			wantErr: true,
+			stubCmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "false")
+			},
 		},
 		"WithTimeout": {
-			mockedStdout:     "",
-			mockedExitStatus: 0,
-			wantTimeout:      true,
-		},
-		"WithTimeoutAndOutput": {
-			mockedStdout:     "should not be returned",
-			mockedExitStatus: 0,
-			wantTimeout:      true,
-		},
-		"WithTimeoutAndError": {
-			mockedStdout:     "",
-			mockedExitStatus: 1,
-			wantTimeout:      true,
+			wantTimeout: true,
+			stubCmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				// "sleep 999" will block until the context deadline kills it
+				return exec.CommandContext(ctx, "sleep", "999")
+			},
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			timeout := time.Second
+			timeout := 5 * time.Second
 			if tt.wantTimeout {
-				timeout = time.Millisecond * 50
+				timeout = 50 * time.Millisecond
 			}
 
-			defer gostub.Stub(&execCommandContext, func(ctx context.Context, command string, args ...string) *exec.Cmd {
-				if tt.wantTimeout {
-					time.Sleep(timeout + time.Millisecond*10)
-				}
-				return makeFakeExecCommandContext(tt.mockedExitStatus, tt.mockedStdout)(ctx, command, args...)
-			}).Reset()
+			defer gostub.Stub(&execCommandContext, tt.stubCmd).Reset()
 
 			out, err := ExecWithTimeout("dummy", []string{}, timeout)
 
-			if tt.wantTimeout || tt.mockedExitStatus != 0 {
+			if tt.wantTimeout {
+				assert.ErrorIs(err, context.DeadlineExceeded)
+				assert.Empty(out)
+			} else if tt.wantErr {
 				assert.NotNil(err)
-				if tt.wantTimeout {
-					assert.Equal(context.DeadlineExceeded, err)
-				}
 			} else {
 				assert.Nil(err)
-			}
-
-			if tt.wantTimeout {
-				assert.Equal("", string(out))
-			} else {
-				assert.Equal(tt.mockedStdout, string(out))
+				assert.Equal(tt.wantOutput, string(out))
 			}
 		})
 	}

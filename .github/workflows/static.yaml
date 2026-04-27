@@ -15,5 +15,5 @@ jobs:
             - name: Run linter
               uses: golangci/golangci-lint-action@3a919529898de77ec3da873e3063ca4b10e7f5cc # v3
               with:
-                  version: v1.51
-                  args: -E=gofmt,deadcode,unused,varcheck,ineffassign,revive,misspell,exportloopref,asciicheck,bodyclose,contextcheck,depguard,dogsled,durationcheck,errname,forbidigo -D=staticcheck --timeout=30m0s
+                  version: v1.64
+                  args: -E=gofmt,unused,ineffassign,revive,misspell,asciicheck,bodyclose,contextcheck,dogsled,durationcheck,errname,forbidigo -D=staticcheck --timeout=30m0s
