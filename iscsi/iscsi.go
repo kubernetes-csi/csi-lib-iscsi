@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,15 +298,36 @@ func (c *Connector) Connect() (string, error) {
 	return c.MountTargetDevice.GetPath(), nil
 }
 
+// parsePortal splits an iSCSI portal into its host and port. It understands
+// bracketed IPv6 literals ("[2001:db8::1]:3260") and falls back to defaultPort
+// when the portal carries no port.
+//
+// The host is returned without brackets. Use net.JoinHostPort to rebuild a
+// portal string for iscsiadm, which expects an IPv6 literal to be bracketed,
+// and the bare host when composing a /dev/disk/by-path link, which udev names
+// with the unbracketed literal.
+func parsePortal(portal string) (string, string) {
+	portal = strings.TrimSpace(portal)
+	if host, port, err := net.SplitHostPort(portal); err == nil {
+		return host, port
+	}
+	// No port present, or a bare IPv6 literal that SplitHostPort rejects.
+	return strings.Trim(portal, "[]"), defaultPort
+}
+
+// bracketHost brackets an IPv6 literal so it can be passed to iscsiadm, and
+// returns IPv4 addresses and hostnames unchanged.
+func bracketHost(host string) string {
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
+}
+
 func (c *Connector) connectTarget(targetIqn string, target string, iFace string, iscsiTransport string) (string, error) {
 	klog.V(2).Infof("Process targetIqn: %s, portal: %s\n", targetIqn, target)
-	targetParts := strings.Split(target, ":")
-	targetPortal := targetParts[0]
-	targetPort := defaultPort
-	if len(targetParts) > 1 {
-		targetPort = targetParts[1]
-	}
-	baseArgs := []string{"-m", "node", "-T", targetIqn, "-p", targetPortal}
+	targetPortal, targetPort := parsePortal(target)
+	baseArgs := []string{"-m", "node", "-T", targetIqn, "-p", bracketHost(targetPortal)}
 	// Rescan sessions to discover newly mapped LUNs. Do not specify the interface when rescanning
 	// to avoid establishing additional sessions to the same target.
 	if _, err := iscsiCmd(append(baseArgs, []string{"-R"}...)...); err != nil {
@@ -321,11 +343,13 @@ func (c *Connector) connectTarget(targetIqn string, target string, iFace string,
 	}
 
 	// create our devicePath that we'll be looking for based on the transport being used
-	// portal with port
-	portal := strings.Join([]string{targetPortal, targetPort}, ":")
-	devicePath := strings.Join([]string{"/dev/disk/by-path/ip", portal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
+	// portal with port, bracketed for IPv6 as iscsiadm expects
+	portal := net.JoinHostPort(targetPortal, targetPort)
+	// udev names the by-path link with the bare IPv6 literal, without brackets
+	byPathPortal := strings.Join([]string{targetPortal, targetPort}, ":")
+	devicePath := strings.Join([]string{"/dev/disk/by-path/ip", byPathPortal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
 	if iscsiTransport != "tcp" {
-		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", portal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
+		devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", byPathPortal, "iscsi", targetIqn, "lun", fmt.Sprint(c.Lun)}, "-")
 	}
 
 	exists, _ := sessionExists(portal, targetIqn)
@@ -380,8 +404,8 @@ func (c *Connector) discoverTarget(targetIqn string, iFace string, portal string
 // Disconnect is for backward-compatibility with c.Disconnect()
 func Disconnect(targetIqn string, targets []string) {
 	for _, target := range targets {
-		targetPortal := strings.Split(target, ":")[0]
-		err := Logout(targetIqn, targetPortal)
+		targetPortal, _ := parsePortal(target)
+		err := Logout(targetIqn, bracketHost(targetPortal))
 		if err != nil {
 			return
 		}
