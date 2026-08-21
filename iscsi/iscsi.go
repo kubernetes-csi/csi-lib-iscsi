@@ -306,12 +306,22 @@ func (c *Connector) Connect() (string, error) {
 // portal string for iscsiadm, which expects an IPv6 literal to be bracketed,
 // and the bare host when composing a /dev/disk/by-path link, which udev names
 // with the unbracketed literal.
+//
+// An unbracketed IPv6 literal is always taken as a whole address, never as an
+// address plus a port: "2001:db8::1:3260" is a valid address in its own right,
+// so "2001:db8::1" with port 3260 cannot be distinguished from it. Callers that
+// need a non-default port with IPv6 must bracket the address.
 func parsePortal(portal string) (string, string) {
 	portal = strings.TrimSpace(portal)
 	if host, port, err := net.SplitHostPort(portal); err == nil {
+		if port == "" {
+			// A trailing colon ("192.168.1.1:") splits cleanly but carries no
+			// port, which would otherwise reach iscsiadm as "192.168.1.1:".
+			port = defaultPort
+		}
 		return host, port
 	}
-	// No port present, or a bare IPv6 literal that SplitHostPort rejects.
+	// No port present, or an unbracketed IPv6 literal that SplitHostPort rejects.
 	return strings.Trim(portal, "[]"), defaultPort
 }
 

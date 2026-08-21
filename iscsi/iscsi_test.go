@@ -874,6 +874,32 @@ func Test_parsePortal(t *testing.T) {
 			wantHost: "2001:db8::1", wantPort: defaultPort,
 			wantBypath: "2001:db8::1:3260", wantIscsiadm: "[2001:db8::1]:3260",
 		},
+		{
+			// "2001:db8::1:3260" is itself a valid address, so it cannot be
+			// told apart from "2001:db8::1" plus port 3260. It is taken as the
+			// whole host and the default port is appended; callers wanting a
+			// non-default port with IPv6 must bracket the address.
+			name: "IPv6 bare with trailing port is treated as an address", portal: "2001:db8::1:3260",
+			wantHost: "2001:db8::1:3260", wantPort: defaultPort,
+			wantBypath: "2001:db8::1:3260:3260", wantIscsiadm: "[2001:db8::1:3260]:3260",
+		},
+		{
+			// SplitHostPort accepts a trailing colon and returns an empty port,
+			// which would otherwise reach iscsiadm as "192.168.1.1:".
+			name: "IPv4 with empty port falls back to default", portal: "192.168.1.1:",
+			wantHost: "192.168.1.1", wantPort: defaultPort,
+			wantBypath: "192.168.1.1:3260", wantIscsiadm: "192.168.1.1:3260",
+		},
+		{
+			name: "IPv6 bracketed with empty port falls back to default", portal: "[2001:db8::1]:",
+			wantHost: "2001:db8::1", wantPort: defaultPort,
+			wantBypath: "2001:db8::1:3260", wantIscsiadm: "[2001:db8::1]:3260",
+		},
+		{
+			name: "IPv6 loopback bracketed", portal: "[::1]:3260",
+			wantHost: "::1", wantPort: "3260",
+			wantBypath: "::1:3260", wantIscsiadm: "[::1]:3260",
+		},
 	}
 
 	for _, tt := range tests {
