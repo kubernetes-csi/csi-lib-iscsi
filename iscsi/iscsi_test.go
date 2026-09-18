@@ -830,3 +830,74 @@ func Test_IsMultipathConsistent(t *testing.T) {
 		})
 	}
 }
+
+func Test_discoverTargetSessionCHAP(t *testing.T) {
+	const (
+		tgtIQN = "iqn.2005-10.org.freenas.ctl:test"
+		portal = "192.168.40.90:3260"
+		iface  = "default"
+	)
+	chap := Secrets{SecretsType: "chap", UserName: "user", Password: "pass"}
+
+	tests := map[string]struct {
+		connector       Connector
+		wantSessionCHAP bool
+	}{
+		"anonymous discovery with CHAP session": {
+			connector: Connector{
+				DoDiscovery:    true,
+				SessionSecrets: chap,
+			},
+			wantSessionCHAP: true,
+		},
+		"CHAP discovery with CHAP session": {
+			connector: Connector{
+				DoDiscovery:     true,
+				DoCHAPDiscovery: true,
+				SessionSecrets:  chap,
+			},
+			wantSessionCHAP: true,
+		},
+		"anonymous discovery with CHAP session and discovery secrets set": {
+			connector: Connector{
+				DoDiscovery:      true,
+				DiscoverySecrets: chap,
+				SessionSecrets:   chap,
+			},
+			wantSessionCHAP: true,
+		},
+		"anonymous discovery without session secrets": {
+			connector: Connector{
+				DoDiscovery: true,
+			},
+			wantSessionCHAP: false,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			var sessionCHAP, discoveryCHAPOnNode bool
+			defer gostub.Stub(&execWithTimeout, func(_ string, args []string, _ time.Duration) ([]byte, error) {
+				for i, arg := range args {
+					if arg != "-n" || i+1 >= len(args) || args[1] != "node" {
+						continue
+					}
+					switch args[i+1] {
+					case "node.session.auth.authmethod":
+						sessionCHAP = true
+					case "discovery.sendtargets.auth.authmethod":
+						discoveryCHAPOnNode = true
+					}
+				}
+				return nil, nil
+			}).Reset()
+
+			c := tt.connector
+			err := c.discoverTarget(tgtIQN, iface, portal)
+			assert.Nil(err)
+			assert.Equal(tt.wantSessionCHAP, sessionCHAP, "session CHAP credentials configured on the node record")
+			assert.False(discoveryCHAPOnNode, "discovery CHAP belongs to the discovery db, not the node record")
+		})
+	}
+}

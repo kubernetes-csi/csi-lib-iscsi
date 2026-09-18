@@ -365,9 +365,14 @@ func (c *Connector) discoverTarget(targetIqn string, iFace string, portal string
 		}
 	}
 
-	if c.DoCHAPDiscovery {
+	// Session CHAP credentials are needed even when discovery is anonymous.
+	if c.DoCHAPDiscovery || c.SessionSecrets.SecretsType == "chap" {
+		discoverySecrets := Secrets{}
+		if c.DoCHAPDiscovery {
+			discoverySecrets = c.DiscoverySecrets
+		}
 		// Make sure we don't log the secrets
-		err := CreateDBEntry(targetIqn, portal, iFace, c.DiscoverySecrets, c.SessionSecrets)
+		err := CreateDBEntry(targetIqn, portal, iFace, discoverySecrets, c.SessionSecrets)
 		if err != nil {
 			klog.V(2).Infof("Error creating db entry: %s\n", err.Error())
 			return err
