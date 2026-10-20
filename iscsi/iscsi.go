@@ -279,9 +279,9 @@ func (c *Connector) Connect() (string, error) {
 	c.MountTargetDevice = mountTargetDevice
 	if err != nil {
 		klog.V(2).Infof("Connect failed: %v", err)
-		err := RemoveSCSIDevices(c.Devices...)
-		if err != nil {
-			return "", err
+		cleanupErr := RemoveSCSIDevices(c.Devices...)
+		if cleanupErr != nil {
+			return "", cleanupErr
 		}
 		c.MountTargetDevice = nil
 		c.Devices = []Device{}
